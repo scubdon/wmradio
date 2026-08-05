@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+
+# Data lives in the GCS bucket, not git (the Action pulls/pushes it)
+data/
+
+# Full-size artwork stays local; the site uses the committed 150px thumbs
+artwork/artwork_large/
+
+# Rebuilt by dashboard/build.py from artwork/artwork_small on every run
+dashboard/site/artwork/
+dashboard/site/data/
