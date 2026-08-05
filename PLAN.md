@@ -85,9 +85,12 @@ Pulls new plays into `data/radio_plays.duckdb`:
       light/dark). All Tier 1 + Tier 2 features plus segment-based rotation
       inference using the May-2025 CT schedule (`radio_schedule_table.html`).
       Preview: `python3 -m http.server 8137 --directory dashboard/site`.
-- [ ] Publish: GitHub repo + Pages, daily Action
-      (update_duckdb --skip-csv → fetch_artwork → build.py → deploy).
-      Needs: repo creation, GCS read credential as an Actions secret.
+- [x] **Published** (2026-08-04): https://scubdon.github.io/wmradio/ from
+      https://github.com/scubdon/wmradio. Daily Action at 10:00 UTC pulls the
+      canonical DB from gs://wmradio-metadata/db/, ingests new plays, fetches
+      artwork, uploads the DB back, rebuilds, deploys Pages. Auth: service
+      account gh-actions-wmradio (objectAdmin on the bucket only), key stored
+      as the GCP_SA_KEY Actions secret. First run verified end-to-end.
 
 ## Dashboard roadmap (from "Potential features.md", 2026-08-04)
 
