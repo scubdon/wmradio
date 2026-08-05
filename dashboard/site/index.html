@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Walmart Radio, Charted</title>
+<meta name="description" content="What Walmart Radio actually plays — every song logged since May 2024, charted daily.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="site">
+    <h1>📻 Walmart Radio, Charted</h1>
+    <p>Every song played on the in-store Walmart Radio stream, logged minute-by-minute
+       since May 2024. Not affiliated with Walmart — just a log of what the speakers are up to.</p>
+    <p class="fineprint" id="updatedLine">Loading…</p>
+  </header>
+
+  <section id="kpiSection" aria-label="Headline stats">
+    <div class="kpis" id="kpis"></div>
+  </section>
+
+  <section id="recentSection">
+    <h2>Recently played</h2>
+    <p class="sub">The last 100 songs, newest first. Click any cover for song stats.</p>
+    <div class="strip" id="recentStrip"></div>
+  </section>
+
+  <section id="topSection">
+    <h2>Top of the charts</h2>
+    <p class="sub">Most-played songs and artists. The range chips scope both lists and the heatmap below.</p>
+    <div class="filters" id="rangeFilters" role="group" aria-label="Date range">
+      <span class="flabel">Range</span>
+      <button class="chip" data-days="7">Last 7 days</button>
+      <button class="chip" data-days="30" aria-pressed="true">Last 30 days</button>
+      <button class="chip" data-days="90">Last 90 days</button>
+      <button class="chip" data-days="365">Last year</button>
+      <button class="chip" data-days="0">All time</button>
+    </div>
+    <div class="cols2">
+      <div class="card">
+        <h2 style="font-size:15px;margin:0 0 10px">Top songs</h2>
+        <div class="ranklist" id="topSongs"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size:15px;margin:0 0 10px">Top artists</h2>
+        <div class="ranklist" id="topArtists"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2 style="font-size:15px;margin:0 0 2px">When the music plays</h2>
+      <p class="sub" id="heatSub">Plays by hour and day of week, shown in your local time.</p>
+      <div class="chart-wrap" id="heatWrap"></div>
+      <div class="heat-scale" id="heatScale"></div>
+      <details class="tablewrap"><summary>Table view</summary><div id="heatTable"></div></details>
+    </div>
+  </section>
+
+  <section id="dailySection">
+    <h2>Plays per day</h2>
+    <p class="sub">Full history. Shaded bands mark gaps where the logger was down — silence in the data, not in the stores.</p>
+    <div class="card">
+      <div class="chart-wrap" id="dailyWrap"></div>
+      <details class="tablewrap"><summary>Table view (monthly)</summary><div id="dailyTable"></div></details>
+    </div>
+  </section>
+
+  <section id="wrappedSection">
+    <h2>Your personal Walmart wrapped</h2>
+    <p class="sub">Pick the hours you're in the store — working or wandering — and see what
+       the radio played at you. Times are your local time.</p>
+    <div class="card">
+      <div class="wrapped-controls">
+        <div class="group" id="dayBtns" role="group" aria-label="Days of week"></div>
+        <div class="group">
+          <label for="hourFrom">From</label> <select id="hourFrom"></select>
+          <label for="hourTo">to</label> <select id="hourTo"></select>
+        </div>
+        <div class="group">
+          <label for="wrapRange">over</label>
+          <select id="wrapRange">
+            <option value="30">last 30 days</option>
+            <option value="90">last 90 days</option>
+            <option value="365" selected>last year</option>
+            <option value="0">all time</option>
+          </select>
+        </div>
+      </div>
+      <div class="wrapped-summary" id="wrapSummary"></div>
+      <div class="cols2">
+        <div><h3 style="font-size:14px;margin:8px 0">Your top songs</h3><div class="ranklist" id="wrapSongs"></div></div>
+        <div><h3 style="font-size:14px;margin:8px 0">Your top artists</h3><div class="ranklist" id="wrapArtists"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="daySection">
+    <h2>One day, in order</h2>
+    <p class="sub">Pick a date to replay it, first song to last. Your local time.</p>
+    <div class="card">
+      <div class="filters"><label for="dayPick" class="flabel">Date</label>
+        <input type="date" id="dayPick"></div>
+      <div id="dayList"></div>
+    </div>
+  </section>
+
+  <section id="rotationSection">
+    <h2>The playlist, reverse-engineered</h2>
+    <p class="sub" id="rotationSub"></p>
+    <div class="seg-grid" id="segGrid"></div>
+  </section>
+
+  <footer class="site">
+    <p id="footGaps"></p>
+    <p>Artwork via <a href="https://coverartarchive.org">Cover Art Archive</a> /
+       <a href="https://musicbrainz.org">MusicBrainz</a> and album art from the stream's metadata.
+       Times recorded in UTC and shown in your browser's timezone.
+       Schedule segments based on the on-air schedule published May 2025 (Central Time).</p>
+  </footer>
+</div>
+
+<dialog id="songModal">
+  <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
+  <div class="modal-body" id="modalBody"></div>
+</dialog>
+
+<div class="tooltip" id="tip"></div>
+<script src="app.js"></script>
+</body>
+</html>

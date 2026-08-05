@@ -1,0 +1,69 @@
+name: Daily refresh & deploy
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # 10:00 UTC ≈ 6am ET, after the overnight blocks
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install duckdb requests
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Download canonical DuckDB
+        run: |
+          mkdir -p data
+          gcloud storage cp gs://wmradio-metadata/db/radio_plays.duckdb data/radio_plays.duckdb
+
+      - name: Ingest new plays
+        run: python scripts/update_duckdb.py --skip-csv
+
+      - name: Fetch artwork for new songs
+        run: python scripts/fetch_artwork.py || echo "artwork fetch failed; continuing"
+
+      - name: Upload refreshed DuckDB
+        run: gcloud storage cp data/radio_plays.duckdb gs://wmradio-metadata/db/radio_plays.duckdb
+
+      - name: Build site data
+        run: python dashboard/build.py
+
+      - name: Commit any new artwork thumbs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artwork/artwork_small
+          git diff --cached --quiet || (git commit -m "Daily artwork additions" && git push)
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard/site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
