@@ -17,6 +17,7 @@ let N;                      // play count
 let T;                      // Float64Array epoch ms, ascending
 let SID;                    // Uint32Array song id per play
 let LHOUR, LDOW, LDAY;      // per-play local hour, local dow (Mon=0), local day key
+let LSLOT;                  // per-play local half-hour slot (0–47)
 let ARTIST_IDS = new Map(); // artist name -> [song ids]
 let rangeDays = 30;         // top-section scope
 
@@ -38,9 +39,11 @@ const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   for (let i = 0; i < N; i++) { m += plays.dt[i]; T[i] = m * 60000; }
 
   LHOUR = new Uint8Array(N); LDOW = new Uint8Array(N); LDAY = new Int32Array(N);
+  LSLOT = new Uint8Array(N);
   for (let i = 0; i < N; i++) {
     const d = new Date(T[i]);
     LHOUR[i] = d.getHours();
+    LSLOT[i] = d.getHours() * 2 + (d.getMinutes() >= 30 ? 1 : 0);
     LDOW[i] = (d.getDay() + 6) % 7; // Mon=0
     LDAY[i] = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate())).getTime() / DAY_MS);
   }
@@ -324,7 +327,14 @@ function dayKeyOf(iso) {
 }
 
 // ---------- personal wrapped ----------
-const wrapState = { days: new Set([0, 1, 2, 3, 4]), from: 9, to: 17, range: 365 };
+// from/to are half-hour slots (0–47). A "to" earlier than "from" wraps past
+// midnight; the post-midnight tail is attributed to the day the shift started.
+const wrapState = { days: new Set([0, 1, 2, 3, 4]), from: 18, to: 34, range: 365 };
+const slotLabel = s => {
+  const h = s >> 1, m = s & 1 ? "30" : "00";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m}${h < 12 ? "a" : "p"}`;
+};
 function initWrapped() {
   const btns = $("#dayBtns");
   DOW_LABELS.forEach((d, i) => {
@@ -338,9 +348,9 @@ function initWrapped() {
     btns.append(b);
   });
   const from = $("#hourFrom"), to = $("#hourTo");
-  for (let h = 0; h < 24; h++) {
-    from.append(new Option(hourLabel(h), h, h === wrapState.from, h === wrapState.from));
-    to.append(new Option(hourLabel(h), h, h === wrapState.to, h === wrapState.to));
+  for (let s = 0; s < 48; s++) {
+    from.append(new Option(slotLabel(s), s, s === wrapState.from, s === wrapState.from));
+    to.append(new Option(slotLabel(s), s, s === wrapState.to, s === wrapState.to));
   }
   from.addEventListener("change", () => { wrapState.from = +from.value; renderWrapped(); });
   to.addEventListener("change", () => { wrapState.to = +to.value; renderWrapped(); });
@@ -350,13 +360,17 @@ function initWrapped() {
 function renderWrapped() {
   const start = rangeStartIdx(wrapState.range);
   const { days, from, to } = wrapState;
-  const inHours = to > from ? h => h >= from && h < to
-                : to < from ? h => h >= from || h < to
-                : () => true; // from == to → full day
+  // Overnight range (to < from): the pre-midnight part counts toward the play's
+  // own day, the post-midnight tail toward the previous day — so the day chips
+  // mean "the day your shift starts".
+  const included = to > from ? i => days.has(LDOW[i]) && LSLOT[i] >= from && LSLOT[i] < to
+                 : to < from ? i => (LSLOT[i] >= from && days.has(LDOW[i])) ||
+                                    (LSLOT[i] < to && days.has((LDOW[i] + 6) % 7))
+                 : i => days.has(LDOW[i]); // from == to → full day
   const counts = new Map();
   let total = 0;
   for (let i = start; i < N; i++) {
-    if (!days.has(LDOW[i]) || !inHours(LHOUR[i])) continue;
+    if (!included(i)) continue;
     counts.set(SID[i], (counts.get(SID[i]) || 0) + 1);
     total++;
   }
