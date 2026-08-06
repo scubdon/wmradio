@@ -10,3 +10,11 @@ artwork/artwork_large/
 # Rebuilt by dashboard/build.py from artwork/artwork_small on every run
 dashboard/site/artwork/
 dashboard/site/data/
+
+# Local-only: planning notes and dev tooling, kept out of the public repo
+PLAN.md
+Potential features.md
+README.md
+radio_schedule_table.html
+cloud_run_function/
+.claude/
