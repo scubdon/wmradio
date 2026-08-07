@@ -9,6 +9,7 @@ const el = (tag, cls, text) => {
   return n;
 };
 const fmtInt = n => n.toLocaleString("en-US");
+const pct = f => `${Math.round(f * 100)}%`;
 const DAY_MS = 86400000;
 
 // ---------- state ----------
@@ -18,11 +19,14 @@ let T;                      // Float64Array epoch ms, ascending
 let SID;                    // Uint32Array song id per play
 let LHOUR, LDOW, LDAY;      // per-play local hour, local dow (Mon=0), local day key
 let LSLOT;                  // per-play local half-hour slot (0–47)
-let ARTIST_IDS = new Map(); // artist name -> [song ids]
+let ARTISTS = new Map();    // artist -> {ids:[], total, rank}
+let ARTIST_RANK = [];       // artist names, most-played first
 let rangeDays = 30;         // top-section scope
+let topLimit = 15;
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+const dtFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit" });
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -47,10 +51,14 @@ const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     LDOW[i] = (d.getDay() + 6) % 7; // Mon=0
     LDAY[i] = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate())).getTime() / DAY_MS);
   }
-  SONGS.forEach(([artist], id) => {
-    if (!ARTIST_IDS.has(artist)) ARTIST_IDS.set(artist, []);
-    ARTIST_IDS.get(artist).push(id);
+  SONGS.forEach(([artist, , , total], id) => {
+    let a = ARTISTS.get(artist);
+    if (!a) ARTISTS.set(artist, a = { ids: [], total: 0 });
+    a.ids.push(id);
+    a.total += total;
   });
+  ARTIST_RANK = [...ARTISTS.entries()].sort((a, b) => b[1].total - a[1].total).map(e => e[0]);
+  ARTIST_RANK.forEach((name, i) => { ARTISTS.get(name).rank = i + 1; });
 
   $("#updatedLine").textContent =
     `${fmtInt(META.total_plays)} plays logged · ${META.first_day} → ${META.last_day} · updated ${dateFmt.format(new Date(META.generated_at))}`;
@@ -63,8 +71,11 @@ const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   initWrapped();
   initDayView();
   renderRotation();
+  initBrowse();
   renderFooter();
   document.addEventListener("click", onGlobalClick);
+  window.addEventListener("hashchange", route);
+  route();
 })();
 
 // ---------- helpers ----------
@@ -76,18 +87,24 @@ function firstIdxAtOrAfter(ms) {
 function rangeStartIdx(days) {
   return days ? firstIdxAtOrAfter(T[N - 1] - days * DAY_MS) : 0;
 }
-function coverNode(art, label, size) {
+function coverNode(art, label, cls) {
   if (art) {
-    const img = el("img", "cover");
+    const img = el("img", "cover" + (cls ? " " + cls : ""));
     img.src = "artwork/" + art;
     img.alt = "";
     img.loading = "lazy";
     img.addEventListener("error", () => {
-      img.replaceWith(el("div", "cover ph", (label || "?").slice(0, 1).toUpperCase()));
+      img.replaceWith(el("div", "cover ph" + (cls ? " " + cls : ""), (label || "?").slice(0, 1).toUpperCase()));
     }, { once: true });
     return img;
   }
-  return el("div", "cover ph", (label || "?").slice(0, 1).toUpperCase());
+  return el("div", "cover ph" + (cls ? " " + cls : ""), (label || "?").slice(0, 1).toUpperCase());
+}
+function rampColors() {
+  const cs = getComputedStyle(document.documentElement);
+  // Light-to-saturated in both themes: "more" is always more blue, never whiter.
+  return ["--seq-100", "--seq-200", "--seq-300", "--seq-400", "--seq-500", "--seq-600", "--seq-700"]
+    .map(v => cs.getPropertyValue(v).trim());
 }
 
 // ---------- KPIs ----------
@@ -132,20 +149,22 @@ function agoLabel(ms) {
 function initRangeFilters() {
   $("#rangeFilters").addEventListener("click", e => {
     const btn = e.target.closest(".chip"); if (!btn) return;
-    for (const c of $("#rangeFilters").children)
-      if (c.classList) c.setAttribute?.("aria-pressed", "false");
+    for (const c of $("#rangeFilters").children) c.setAttribute?.("aria-pressed", "false");
     btn.setAttribute("aria-pressed", "true");
     rangeDays = +btn.dataset.days;
+    topLimit = 15;
     renderTopSection();
   });
+  for (const btn of [$("#moreSongs"), $("#moreArtists")])
+    btn.addEventListener("click", () => { topLimit += 50; renderTopSection(); });
 }
 function renderTopSection() {
   const start = rangeStartIdx(rangeDays);
   const counts = new Map();
   for (let i = start; i < N; i++) counts.set(SID[i], (counts.get(SID[i]) || 0) + 1);
 
-  const topSongs = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
-  renderRankList($("#topSongs"), topSongs.map(([sid, n]) => ({
+  const songRows = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  renderRankList($("#topSongs"), songRows.slice(0, topLimit).map(([sid, n]) => ({
     sid, n, t1: SONGS[sid][1], t2: SONGS[sid][0], art: SONGS[sid][2],
   })));
 
@@ -157,26 +176,36 @@ function renderTopSection() {
     if (n > rec.bestN) { rec.best = sid; rec.bestN = n; }
     byArtist.set(a, rec);
   }
-  const topArtists = [...byArtist.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 15);
-  renderRankList($("#topArtists"), topArtists.map(([name, rec]) => ({
-    sid: rec.best, n: rec.n, t1: name, t2: `${fmtInt(ARTIST_IDS.get(name).length)} song${ARTIST_IDS.get(name).length > 1 ? "s" : ""}`,
-    art: SONGS[rec.best][2],
-  })));
+  const artistRows = [...byArtist.entries()].sort((a, b) => b[1].n - a[1].n);
+  renderRankList($("#topArtists"), artistRows.slice(0, topLimit).map(([name, rec]) => {
+    const k = ARTISTS.get(name).ids.length;
+    return { artist: name, n: rec.n, t1: name, t2: `${fmtInt(k)} song${k > 1 ? "s" : ""}`,
+             art: SONGS[rec.best][2] };
+  }));
 
+  toggleMore($("#moreSongs"), songRows.length);
+  toggleMore($("#moreArtists"), artistRows.length);
   renderHeatmap(start);
 }
-function renderRankList(root, rows) {
+function toggleMore(btn, total) {
+  btn.hidden = topLimit >= total;
+  btn.textContent = `Show ${Math.min(50, total - topLimit)} more`;
+}
+function renderRankList(root, rows, opts) {
+  const o = opts || {};
   root.replaceChildren();
-  const max = rows.length ? rows[0].n : 1;
+  const max = o.max != null ? o.max : (rows.length ? Math.max(...rows.map(r => r.n)) : 1);
   rows.forEach((r, i) => {
     const b = el("button", "rankrow");
-    b.dataset.sid = r.sid;
+    if (r.artist) b.dataset.artist = r.artist; else b.dataset.sid = r.sid;
     const meta = el("div", "meta");
-    meta.append(el("div", "t1", r.t1), el("div", "t2", r.t2));
+    meta.append(el("div", "t1", r.t1));
+    if (r.t2 !== "") meta.append(el("div", "t2", r.t2));
     const bar = el("div", "bar");
     bar.style.width = `${Math.max(2, (r.n / max) * 100)}%`;
-    b.append(el("span", "rk", String(i + 1)), coverNode(r.art, r.t1), meta,
-             el("span", "n", fmtInt(r.n)), bar);
+    b.append(el("span", "rk", String(o.startRank ? o.startRank + i : i + 1)),
+             coverNode(r.art, r.t1), meta,
+             el("span", "n", r.nLabel != null ? r.nLabel : fmtInt(r.n)), bar);
     root.append(b);
   });
 }
@@ -187,12 +216,8 @@ function renderHeatmap(start) {
   for (let i = start; i < N; i++) grid[LDOW[i]][LHOUR[i]]++;
   const max = Math.max(1, ...grid.flat());
 
-  // Sequential ramp: "more" must move AWAY from the surface — darker steps on
-  // the light surface, lighter/brighter steps on the dark surface.
-  const ramp = ["--seq-100", "--seq-200", "--seq-300", "--seq-400", "--seq-500", "--seq-600", "--seq-700"]
-    .map(v => getComputedStyle(document.documentElement).getPropertyValue(v).trim());
-  if (matchMedia("(prefers-color-scheme: dark)").matches &&
-      document.documentElement.dataset.theme !== "light") ramp.reverse();
+  // Sequential ramp: more plays = more saturated blue, in both themes.
+  const ramp = rampColors();
   const colorFor = v => v === 0 ? null : ramp[Math.min(6, Math.floor((v / max) * 7))];
 
   const cw = 30, ch = 22, left = 34, top = 18;
@@ -218,10 +243,10 @@ function renderHeatmap(start) {
   attachCellTips(svg, $("#heatWrap"));
 
   const scale = $("#heatScale");
-  scale.replaceChildren(el("span", null, "fewer"));
+  scale.replaceChildren(el("span", null, "fewer plays"));
   const sw = el("div", "swatches");
   ramp.forEach(c => { const i = el("i"); i.style.background = c; sw.append(i); });
-  scale.append(sw, el("span", null, "more"));
+  scale.append(sw, el("span", null, "more plays"));
 
   const tbl = el("table", "tbl");
   const hr = el("tr"); hr.append(el("th", null, ""));
@@ -394,7 +419,7 @@ function renderWrapped() {
   }
   renderRankList($("#wrapArtists"),
     [...byArtist.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 10)
-      .map(([name, rec]) => ({ sid: rec.best, n: rec.n, t1: name, t2: "", art: SONGS[rec.best][2] })));
+      .map(([name, rec]) => ({ artist: name, n: rec.n, t1: name, t2: "", art: SONGS[rec.best][2] })));
 }
 
 // ---------- one day view ----------
@@ -429,46 +454,153 @@ function renderDayView() {
 }
 
 // ---------- rotation ----------
-const SEGMENT_ORDER = ["World Music", "Overnights", "The Chris Show", "The Bo Show",
-  "Kirby Gwen & Friends", "Sensory Hours"];
-const SEGMENT_BLURBS = {
-  "World Music": "The default daytime block — the biggest share of airtime.",
-  "Overnights": "Late-night shuffle pool (11p–6a CT, minus the overnight shows).",
-  "The Chris Show": "Weekday mornings + evenings (live 6–8a CT).",
-  "The Bo Show": "Noon + midnight hour (CT).",
-  "Kirby Gwen & Friends": "3–4p and 3–4a CT.",
-  "Sensory Hours": "8–10a CT daily — the calmer block.",
-};
 function renderRotation() {
-  const rot = META.rotation;
+  const rot = META.rotation, dn = rot.daynight;
+
   $("#rotationSub").textContent =
-    `Over the last ${rot.window_days} days the stream logged ${fmtInt(rot.window_plays)} plays drawing on ` +
-    `${fmtInt(rot.pool_size)} songs played ${rot.min_plays}+ times — that's the working rotation. ` +
-    `Below, each schedule segment's most-played songs; a ×lift badge means the song plays ` +
-    `disproportionately in that segment (its signature tracks). Segment times follow the published ` +
-    `schedule (Central Time).`;
-  const grid = $("#segGrid");
-  for (const name of SEGMENT_ORDER) {
-    const seg = rot.segments[name];
-    if (!seg) continue;
-    const card = el("div", "card seg-card");
-    card.append(el("h3", null, name));
-    card.append(el("div", "seghint",
-      `${SEGMENT_BLURBS[name] || ""} ${fmtInt(seg.total_plays)} plays · ${fmtInt(seg.distinct_songs)} distinct songs in the window.`));
-    const ol = el("ol");
-    seg.top.slice(0, 10).forEach(([sid, n, lift]) => {
-      const li = el("li");
-      const sn = el("span", "sn");
-      sn.append(document.createTextNode(SONGS[sid][1] + " "));
-      sn.append(el("span", "sa", "· " + SONGS[sid][0]));
-      li.append(sn);
-      if (lift >= 1.8) li.append(el("span", "lift", `×${lift.toFixed(1)}`));
-      li.append(el("span", "sc", fmtInt(n)));
-      ol.append(li);
-    });
-    card.append(ol);
-    grid.append(card);
+    `Over the last ${rot.window_days} days the stream played ${fmtInt(rot.window_plays)} songs drawn ` +
+    `from ${fmtInt(rot.distinct_songs)} distinct titles. How often each one came round:`;
+
+  const rows = $("#tierRows");
+  rows.replaceChildren();
+  const maxPlays = Math.max(...rot.tiers.map(t => t.plays));
+  for (const tier of rot.tiers) {
+    if (!tier.songs) continue;
+    const row = el("details", "tier");
+    const sum = el("summary");
+    sum.append(el("span", "tname", tier.label),
+               el("span", "tblurb", tier.blurb),
+               el("span", "tsongs", `${fmtInt(tier.songs)} songs`),
+               el("span", "tshare", `${pct(tier.plays / rot.window_plays)} of airtime`));
+    const bar = el("div", "tbar");
+    bar.style.width = `${(tier.plays / maxPlays) * 100}%`;
+    sum.append(bar);
+    row.append(sum);
+    const list = el("div", "ranklist");
+    renderRankList(list, tier.top.map(([sid, n]) => ({
+      sid, n, t1: SONGS[sid][1], t2: SONGS[sid][0], art: SONGS[sid][2],
+      nLabel: `${n}×` })));
+    row.append(list);
+    rows.append(row);
   }
+  $("#rotationNote").textContent =
+    `Nothing here is announced — it's inferred from play counts. A song crossing from ` +
+    `“Occasional” to “Regular” is the station adding it to rotation; the reverse is it being retired.`;
+
+  // just added
+  $("#enteredSub").textContent =
+    `Counting a song as “in rotation” once it reaches ${rot.min_plays} plays in a ` +
+    `${rot.window_days}-day window: ${fmtInt(rot.n_entered)} songs have entered since the previous ` +
+    `window and ${fmtInt(rot.n_left)} have dropped out. The newcomers getting the most airtime:`;
+  renderRankList($("#enteredList"), rot.entered.slice(0, 12).map(([sid, n]) => ({
+    sid, n, t1: SONGS[sid][1], t2: SONGS[sid][0], art: SONGS[sid][2], nLabel: `${n}×` })));
+
+  renderTrends();
+
+  // day / night
+  $("#dnSub").textContent =
+    `${pct(dn.baseline)} of all plays land between 11pm and 6am Central. If one playlist ran ` +
+    `around the clock, almost every song would sit near that mark. Instead, of the ` +
+    `${fmtInt(dn.n_tested)} songs played at least ${dn.min_plays} times in the last ` +
+    `${dn.window_days} days, ${fmtInt(dn.n_night)} skew significantly to the night and ` +
+    `${fmtInt(dn.n_day)} to the day — chance alone would produce about ${dn.expected} of each. ` +
+    `The overnight pool leans dance, remix and indie; the daytime pool leans country and 80s pop.`;
+  const share = r => ({ sid: r[0], n: r[2], t1: SONGS[r[0]][1],
+                        t2: `${SONGS[r[0]][0]} · ${r[1]} plays`,
+                        art: SONGS[r[0]][2], nLabel: pct(r[2]) });
+  renderRankList($("#nightList"), dn.night_top.slice(0, 10).map(share), { max: 1 });
+  renderRankList($("#dayList2"), dn.day_top.slice(0, 10).map(r =>
+    ({ ...share(r), n: 1 - r[2], nLabel: pct(1 - r[2]) })), { max: 1 });
+  $("#dnFoot").textContent =
+    `Percentages are each song's share of plays falling in its column's hours. Songs at 0% ` +
+    `overnight across 20-plus plays aren't a coincidence — they're never scheduled after dark.`;
+}
+
+function renderTrends() {
+  // Both measures are sensitive to how many plays a month has, so only
+  // near-complete months qualify. The first survivor is then dropped too: its
+  // "not heard last month" figure is measured against a stub of a month.
+  const tr = META.trends.filter(t => t[1] >= 8000).slice(1);
+  const W = 460, H = 190, left = 34, right = 8, top = 10, bottom = 24;
+  const iw = W - left - right, ih = H - top - bottom;
+  const x = i => left + (i / (tr.length - 1)) * iw;
+  const y = v => top + ih - v * ih;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "Playlist concentration and freshness by month" });
+  for (let v = 0; v <= 1; v += 0.25) {
+    svg.append(svgEl("line", { x1: left, x2: W - right, y1: y(v), y2: y(v),
+      class: v === 0 ? "axis-line" : "grid-line" }));
+    svg.append(svgText(left - 6, y(v) + 4, pct(v), "end"));
+  }
+  tr.forEach((t, i) => {
+    const dt = new Date(t[0] + "T00:00:00");
+    if (dt.getMonth() % 6 !== 0) return;
+    // Pin the end labels inward so they don't run off the viewBox.
+    const anchor = i === 0 ? "start" : i === tr.length - 1 ? "end" : "middle";
+    svg.append(svgText(x(i), H - 8, monthFmt.format(dt), anchor));
+  });
+  const line = (idx, stroke) => {
+    let d = "";
+    tr.forEach((t, i) => { d += `${i ? " L" : "M"} ${x(i).toFixed(1)} ${y(t[idx]).toFixed(1)}`; });
+    svg.append(svgEl("path", { d, fill: "none", stroke, "stroke-width": 1.6,
+      "stroke-linejoin": "round" }));
+  };
+  line(3, "var(--series-1)");
+  line(4, "var(--series-2)");
+  $("#trendWrap").replaceChildren(svg);
+
+  const lg = $("#trendLegend");
+  lg.replaceChildren();
+  [["var(--series-1)", "Airtime from the month's top 50 songs"],
+   ["var(--series-2)", "Airtime from songs not heard the month before"]].forEach(([c, label]) => {
+    const item = el("span", "lgi");
+    const dot = el("i"); dot.style.background = c;
+    item.append(dot, document.createTextNode(label));
+    lg.append(item);
+  });
+}
+
+// ---------- browse ----------
+let browseMode = "songs", browseLimit = 40, browseQ = "";
+function initBrowse() {
+  $("#browseCount").textContent = `${fmtInt(META.n_songs)} songs by ${fmtInt(META.n_artists)} artists`;
+  $("#browseQ").addEventListener("input", e => {
+    browseQ = e.target.value.trim().toLowerCase();
+    browseLimit = 40;
+    renderBrowse();
+  });
+  $("#browseSection .filters").addEventListener("click", e => {
+    const btn = e.target.closest(".chip"); if (!btn) return;
+    for (const c of btn.parentElement.querySelectorAll(".chip")) c.setAttribute("aria-pressed", "false");
+    btn.setAttribute("aria-pressed", "true");
+    browseMode = btn.dataset.mode;
+    browseLimit = 40;
+    renderBrowse();
+  });
+  $("#browseMore").addEventListener("click", () => { browseLimit += 100; renderBrowse(); });
+  renderBrowse();
+}
+function renderBrowse() {
+  let rows;
+  if (browseMode === "songs") {
+    rows = SONGS.map(([artist, song, art, n], sid) => ({ sid, n, t1: song, t2: artist, art }));
+    if (browseQ) rows = rows.filter(r =>
+      r.t1.toLowerCase().includes(browseQ) || r.t2.toLowerCase().includes(browseQ));
+  } else {
+    rows = ARTIST_RANK.map(name => {
+      const a = ARTISTS.get(name);
+      const best = a.ids.reduce((p, c) => SONGS[c][3] > SONGS[p][3] ? c : p, a.ids[0]);
+      return { artist: name, n: a.total, t1: name,
+               t2: `${fmtInt(a.ids.length)} song${a.ids.length > 1 ? "s" : ""}`,
+               art: SONGS[best][2] };
+    });
+    if (browseQ) rows = rows.filter(r => r.t1.toLowerCase().includes(browseQ));
+  }
+  renderRankList($("#browseList"), rows.slice(0, browseLimit), { max: rows.length ? rows[0].n : 1 });
+  if (!rows.length) $("#browseList").append(el("p", "sub", "Nothing matches that."));
+  const btn = $("#browseMore");
+  btn.hidden = browseLimit >= rows.length;
+  btn.textContent = `Show ${Math.min(100, Math.max(0, rows.length - browseLimit))} more of ${fmtInt(rows.length)}`;
 }
 
 // ---------- footer ----------
@@ -479,70 +611,261 @@ function renderFooter() {
     `The weeks before Christmas skew heavily to holiday music.`;
 }
 
-// ---------- song modal ----------
+// ---------- routing ----------
 function onGlobalClick(e) {
-  const btn = e.target.closest("[data-sid]");
-  if (btn) openSongModal(+btn.dataset.sid);
+  const a = e.target.closest("[data-artist]");
+  if (a) { location.hash = "artist/" + encodeURIComponent(a.dataset.artist); return; }
+  const s = e.target.closest("[data-sid]");
+  if (s) location.hash = "song/" + s.dataset.sid;
 }
-$("#modalClose").addEventListener("click", () => $("#songModal").close());
-$("#songModal").addEventListener("click", e => {
-  if (e.target === e.currentTarget) e.currentTarget.close();
-});
-function openSongModal(sid) {
-  const [artist, song, art, total] = SONGS[sid];
-  const body = $("#modalBody");
-  body.replaceChildren();
+function route() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  const detail = $("#detail");
+  if (h.startsWith("song/")) showDetail(songPage(+h.slice(5)));
+  else if (h.startsWith("artist/")) showDetail(artistPage(h.slice(7)));
+  else {
+    detail.hidden = true; detail.replaceChildren();
+    $("#home").hidden = false;
+  }
+}
+function showDetail(node) {
+  const detail = $("#detail");
+  $("#home").hidden = true;
+  detail.replaceChildren(node);
+  detail.hidden = false;
+  window.scrollTo(0, 0);
+}
+function backLink() {
+  const a = el("a", "backlink", "← All the charts");
+  a.href = "#";
+  return a;
+}
 
-  let first = null, last = null;
-  const byMonth = new Map();
+// ---------- scans ----------
+let OUTAGES = null;
+function overlapsOutage(a, b) {
+  if (!OUTAGES) OUTAGES = META.gaps.map(([s, e]) =>
+    [dayKeyOf(s) * DAY_MS, (dayKeyOf(e) + 1) * DAY_MS]);
+  return OUTAGES.some(([s, e]) => a < e && b > s);
+}
+function scanPlays(match) {
+  const times = [], byMonth = new Map(), byHour = new Array(24).fill(0),
+        byDow = new Array(7).fill(0);
   for (let i = 0; i < N; i++) {
-    if (SID[i] !== sid) continue;
-    if (first === null) first = T[i];
-    last = T[i];
+    if (!match(SID[i])) continue;
+    times.push(i);
     const d = new Date(T[i]);
     const k = d.getFullYear() * 12 + d.getMonth();
     byMonth.set(k, (byMonth.get(k) || 0) + 1);
+    byHour[LHOUR[i]]++;
+    byDow[LDOW[i]]++;
   }
+  return { times, byMonth, byHour, byDow };
+}
+function statRow(pairs) {
+  const row = el("div", "statrow");
+  for (const [v, l] of pairs) {
+    if (v == null) continue;
+    const d = el("div");
+    d.append(el("div", "v", v), el("div", "l", l));
+    row.append(d);
+  }
+  return row;
+}
 
-  const head = el("div", "modal-head");
-  head.append(coverNode(art, song));
-  const hm = el("div");
-  const h3 = el("h3", null, song);
-  hm.append(h3, el("div", "a", artist));
-  head.append(hm);
-  body.append(head);
+// ---------- song page ----------
+function songPage(sid) {
+  if (!SONGS[sid]) return el("p", "sub", "Unknown song.");
+  const [artist, song, art, total] = SONGS[sid];
+  const page = el("div", "page");
+  page.append(backLink());
 
-  const stats = el("div", "modal-stats");
-  const mk = (v, l) => { const d = el("div"); d.append(el("div", "v", v), el("div", "l", l)); return d; };
-  stats.append(mk(fmtInt(total), "total plays"),
-               mk(dateFmt.format(new Date(first)), "first heard"),
-               mk(dateFmt.format(new Date(last)), "last heard"));
-  body.append(stats);
+  const head = el("div", "pagehead");
+  head.append(coverNode(art, song, "xl"));
+  const ht = el("div");
+  ht.append(el("p", "eyebrow", "Song"), el("h1", null, song));
+  const link = el("button", "artistlink", artist);
+  link.dataset.artist = artist;
+  ht.append(link);
+  head.append(ht);
+  page.append(head);
 
-  // plays-per-month mini chart
+  const sc = scanPlays(s => s === sid);
+  const first = T[sc.times[0]], last = T[sc.times[sc.times.length - 1]];
+  const spanDays = Math.max(1, (last - first) / DAY_MS);
+  // Stretches that straddle logger downtime aren't the station resting the
+  // song, they're us not listening — so they don't count as silence.
+  const gaps = [], clean = [];
+  for (let i = 1; i < sc.times.length; i++) {
+    const a = T[sc.times[i - 1]], b = T[sc.times[i]];
+    gaps.push(b - a);
+    if (!overlapsOutage(a, b)) clean.push(b - a);
+  }
+  const longest = clean.length ? Math.max(...clean) : 0;
+  const median = gaps.length ? gaps.slice().sort((a, b) => a - b)[gaps.length >> 1] : 0;
+  const peakHour = sc.byHour.indexOf(Math.max(...sc.byHour));
+
+  page.append(statRow([
+    [fmtInt(total), "total plays"],
+    [`#${sid + 1}`, "all-time rank"],
+    [(total / spanDays * 7).toFixed(1), "plays per week"],
+    [dateFmt.format(new Date(first)), "first heard"],
+    [dateFmt.format(new Date(last)), "last heard"],
+    [median ? fmtDur(median) : null, "typical wait between plays"],
+    [longest ? fmtDur(longest) : null, "longest silence"],
+    [`${hourLabel(peakHour)}–${hourLabel((peakHour + 1) % 24)}`, "favourite hour"],
+  ]));
+
+  page.append(chartCard("Plays per month", monthChart(sc.byMonth),
+    "Every month since logging began. Flat stretches are gaps in the log, not the station."));
+  page.append(twoUp(
+    chartCard("By hour of day", barChart(sc.byHour, i => hourLabel(i), 3), "Your local time."),
+    chartCard("By day of week", barChart(sc.byDow, i => DOW_LABELS[i], 1), null)));
+
+  page.append(recentPlaysCard(sc.times, `Last plays of “${song}”`));
+
+  const sibs = ARTISTS.get(artist).ids.filter(i => i !== sid)
+    .sort((a, b) => SONGS[b][3] - SONGS[a][3]);
+  if (sibs.length) {
+    const card = el("div", "card");
+    card.append(el("h3", "cardtitle", `More from ${artist}`));
+    const list = el("div", "ranklist");
+    renderRankList(list, sibs.slice(0, 10).map(id => ({
+      sid: id, n: SONGS[id][3], t1: SONGS[id][1], t2: "", art: SONGS[id][2] })));
+    card.append(list);
+    page.append(card);
+  }
+  document.title = `${song} — ${artist} · Recently played at Walmart`;
+  return page;
+}
+
+// ---------- artist page ----------
+function artistPage(name) {
+  const a = ARTISTS.get(name);
+  if (!a) return el("p", "sub", "Unknown artist.");
+  const page = el("div", "page");
+  page.append(backLink());
+
+  const ids = a.ids.slice().sort((x, y) => SONGS[y][3] - SONGS[x][3]);
+  const head = el("div", "pagehead");
+  head.append(coverNode(SONGS[ids[0]][2], name, "xl"));
+  const ht = el("div");
+  ht.append(el("p", "eyebrow", "Artist"), el("h1", null, name));
+  ht.append(el("p", "sub", `${fmtInt(a.total)} plays across ${fmtInt(ids.length)} ` +
+    `song${ids.length > 1 ? "s" : ""}`));
+  head.append(ht);
+  page.append(head);
+
+  const idSet = new Set(ids);
+  const sc = scanPlays(s => idSet.has(s));
+  const first = T[sc.times[0]], last = T[sc.times[sc.times.length - 1]];
+  const spanDays = Math.max(1, (last - first) / DAY_MS);
+  const peakHour = sc.byHour.indexOf(Math.max(...sc.byHour));
+
+  page.append(statRow([
+    [fmtInt(a.total), "total plays"],
+    [`#${a.rank}`, "artist rank"],
+    [fmtInt(ids.length), "songs in the log"],
+    [`${(a.total / META.total_plays * 100).toFixed(2)}%`, "of all airtime"],
+    [(a.total / spanDays * 7).toFixed(1), "plays per week"],
+    [dateFmt.format(new Date(first)), "first heard"],
+    [dateFmt.format(new Date(last)), "last heard"],
+    [`${hourLabel(peakHour)}–${hourLabel((peakHour + 1) % 24)}`, "favourite hour"],
+  ]));
+
+  const card = el("div", "card");
+  card.append(el("h3", "cardtitle", "Every song, most played first"));
+  const list = el("div", "ranklist");
+  renderRankList(list, ids.map(id => ({
+    sid: id, n: SONGS[id][3], t1: SONGS[id][1],
+    t2: `${pct(SONGS[id][3] / a.total)} of their airtime`, art: SONGS[id][2] })));
+  card.append(list);
+  page.append(card);
+
+  page.append(chartCard("Plays per month", monthChart(sc.byMonth),
+    `Every ${name} play, by month.`));
+  page.append(twoUp(
+    chartCard("By hour of day", barChart(sc.byHour, i => hourLabel(i), 3), "Your local time."),
+    chartCard("By day of week", barChart(sc.byDow, i => DOW_LABELS[i], 1), null)));
+
+  page.append(recentPlaysCard(sc.times, `Last plays from ${name}`));
+  document.title = `${name} · Recently played at Walmart`;
+  return page;
+}
+
+function twoUp(a, b) {
+  const row = el("div", "cols2");
+  row.append(a, b);
+  return row;
+}
+function recentPlaysCard(times, title) {
+  const card = el("div", "card");
+  card.append(el("h3", "cardtitle", title));
+  const list = el("div", "playlog");
+  for (const i of times.slice(-40).reverse()) {
+    const row = el("div", "logrow");
+    row.append(el("time", null, dtFmt.format(new Date(T[i]))));
+    const [ar, sg] = SONGS[SID[i]];
+    row.append(el("span", "lt", sg), el("span", "la", ar));
+    list.append(row);
+  }
+  card.append(list);
+  return card;
+}
+function chartCard(title, svg, note) {
+  const card = el("div", "card");
+  card.append(el("h3", "cardtitle", title));
+  if (note) card.append(el("p", "sub", note));
+  const wrap = el("div", "chart-wrap");
+  wrap.append(svg);
+  card.append(wrap);
+  attachCellTips(svg, wrap);
+  return card;
+}
+function fmtDur(ms) {
+  const h = ms / 3600000;
+  if (h < 48) return `${h.toFixed(1)}h`;
+  const d = h / 24;
+  return d < 60 ? `${Math.round(d)} days` : `${(d / 30.44).toFixed(1)} months`;
+}
+function monthChart(byMonth) {
   const k0 = new Date(T[0]).getFullYear() * 12 + new Date(T[0]).getMonth();
   const k1 = new Date(T[N - 1]).getFullYear() * 12 + new Date(T[N - 1]).getMonth();
-  const vals = [];
-  for (let k = k0; k <= k1; k++) vals.push(byMonth.get(k) || 0);
-  const W = 480, H = 90, bw = W / vals.length;
+  const vals = [], labels = [];
+  for (let k = k0; k <= k1; k++) {
+    vals.push(byMonth.get(k) || 0);
+    labels.push(new Date(Math.floor(k / 12), k % 12, 1));
+  }
+  return barChart(vals, i => monthFmt.format(labels[i]), 3, v => `${fmtInt(v)} plays`);
+}
+function barChart(vals, labelFor, labelEvery, tipFmt) {
+  const W = 460, H = 150, left = 30, right = 6, top = 8, bottom = 22;
+  const iw = W - left - right, ih = H - top - bottom;
   const maxV = Math.max(1, ...vals);
+  const bw = iw / vals.length;
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
-    "aria-label": "Plays per month" });
-  svg.append(svgEl("line", { x1: 0, x2: W, y1: H - 14, y2: H - 14, class: "axis-line" }));
+    "aria-label": "Play counts" });
+  const ticks = [0, Math.round(maxV / 2), maxV];
+  for (const v of ticks) {
+    const y = top + ih - (v / maxV) * ih;
+    svg.append(svgEl("line", { x1: left, x2: W - right, y1: y, y2: y,
+      class: v === 0 ? "axis-line" : "grid-line" }));
+    svg.append(svgText(left - 5, y + 4, fmtInt(v), "end"));
+  }
   vals.forEach((v, i) => {
-    if (!v) return;
-    const bh = Math.max(2, (v / maxV) * (H - 24));
-    svg.append(svgEl("rect", { x: i * bw + 1, y: H - 14 - bh, width: Math.max(2, bw - 2),
-      height: bh, rx: Math.min(2, bw / 3), fill: "var(--series-1)" }));
+    if (v) {
+      const bh = Math.max(1.5, (v / maxV) * ih);
+      const rect = svgEl("rect", { x: left + i * bw + bw * 0.12, y: top + ih - bh,
+        width: Math.max(1.5, bw * 0.76), height: bh, rx: Math.min(2, bw / 4),
+        fill: "var(--series-1)" });
+      rect.dataset.tip = JSON.stringify({
+        v: tipFmt ? tipFmt(v) : `${fmtInt(v)} plays`, l: labelFor(i) });
+      svg.append(rect);
+    }
+    if (i % labelEvery === 0 && bw * labelEvery > 24)
+      svg.append(svgText(left + i * bw + bw / 2, H - 7, labelFor(i), "middle"));
   });
-  svg.append(svgText(2, H - 2, monthFmt.format(new Date(T[0])), "start"));
-  svg.append(svgText(W - 2, H - 2, monthFmt.format(new Date(T[N - 1])), "end"));
-  const cap = el("div", "l", "");
-  cap.style.cssText = "color:var(--muted);font-size:12px;margin-top:14px";
-  cap.textContent = "Plays per month";
-  body.append(cap, svg);
-
-  $("#songModal").showModal();
+  return svg;
 }
 
 // ---------- svg + tooltip utils ----------

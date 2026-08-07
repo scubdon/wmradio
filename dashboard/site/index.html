@@ -3,19 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Walmart Radio, Charted</title>
-<meta name="description" content="What Walmart Radio actually plays — every song logged since May 2024, charted daily.">
+<title>Recently played at Walmart</title>
+<meta name="description" content="Every song played on the in-store Walmart Radio stream, logged minute-by-minute since May 2024.">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
 </head>
 <body>
 <div class="wrap">
 
+<div id="home">
+
   <header class="site">
-    <h1>📻 Walmart Radio, Charted</h1>
-    <p>Every song played on the in-store Walmart Radio stream, logged minute-by-minute
-       since May 2024. Not affiliated with Walmart — just a log of what the speakers are up to.</p>
-    <p class="fineprint" id="updatedLine">Loading…</p>
+    <div class="hero">
+      <img class="hero-art" src="assets/cover.jpg" width="512" height="512"
+           alt="Mock album cover reading “NOW That's What I Call Walmart Radio”">
+      <div class="hero-text">
+        <h1>Recently played at Walmart</h1>
+        <p>Every song played on the in-store Walmart Radio stream, logged minute-by-minute
+           since May 2024. Not affiliated with Walmart — just a log of what the speakers
+           are up to.</p>
+        <p class="fineprint" id="updatedLine">Loading…</p>
+      </div>
+    </div>
   </header>
 
   <section id="kpiSection" aria-label="Headline stats">
@@ -24,7 +33,7 @@
 
   <section id="recentSection">
     <h2>Recently played</h2>
-    <p class="sub">The last 100 songs, newest first. Click any cover for song stats.</p>
+    <p class="sub">The last 100 songs, newest first. Click any cover for the full song page.</p>
     <div class="strip" id="recentStrip"></div>
   </section>
 
@@ -41,16 +50,18 @@
     </div>
     <div class="cols2">
       <div class="card">
-        <h2 style="font-size:15px;margin:0 0 10px">Top songs</h2>
+        <h3 class="cardtitle">Top songs</h3>
         <div class="ranklist" id="topSongs"></div>
+        <button class="morebtn" id="moreSongs">Show 50 more</button>
       </div>
       <div class="card">
-        <h2 style="font-size:15px;margin:0 0 10px">Top artists</h2>
+        <h3 class="cardtitle">Top artists</h3>
         <div class="ranklist" id="topArtists"></div>
+        <button class="morebtn" id="moreArtists">Show 50 more</button>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
-      <h2 style="font-size:15px;margin:0 0 2px">When the music plays</h2>
+      <h3 class="cardtitle">When the music plays</h3>
       <p class="sub" id="heatSub">Plays by hour and day of week, shown in your local time.</p>
       <div class="chart-wrap" id="heatWrap"></div>
       <div class="heat-scale" id="heatScale"></div>
@@ -91,8 +102,8 @@
       </div>
       <div class="wrapped-summary" id="wrapSummary"></div>
       <div class="cols2">
-        <div><h3 style="font-size:14px;margin:8px 0">Your top songs</h3><div class="ranklist" id="wrapSongs"></div></div>
-        <div><h3 style="font-size:14px;margin:8px 0">Your top artists</h3><div class="ranklist" id="wrapArtists"></div></div>
+        <div><h3 class="cardtitle">Your top songs</h3><div class="ranklist" id="wrapSongs"></div></div>
+        <div><h3 class="cardtitle">Your top artists</h3><div class="ranklist" id="wrapArtists"></div></div>
       </div>
     </div>
   </section>
@@ -109,28 +120,80 @@
 
   <section id="rotationSection">
     <h2>The playlist, reverse-engineered</h2>
-    <p class="sub" id="rotationSub"></p>
-    <div class="seg-grid" id="segGrid"></div>
+    <p class="sub">Nobody publishes what's in rotation, so this works it out from the log alone —
+       no show names, no schedule, just the clock and 224,000 plays.</p>
+
+    <div class="card">
+      <h3 class="cardtitle">What's in rotation right now</h3>
+      <p class="sub" id="rotationSub"></p>
+      <div id="tierRows"></div>
+      <p class="sub" id="rotationNote"></p>
+    </div>
+
+    <div class="cols2" style="margin-top:16px">
+      <div class="card">
+        <h3 class="cardtitle">Just added</h3>
+        <p class="sub" id="enteredSub"></p>
+        <div class="ranklist" id="enteredList"></div>
+      </div>
+      <div class="card">
+        <h3 class="cardtitle">How the playlist shifts</h3>
+        <p class="sub">Two ways of measuring how narrow the station gets. The
+           December spikes are the holiday-music takeover.</p>
+        <div class="chart-wrap" id="trendWrap"></div>
+        <div class="legend" id="trendLegend"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3 class="cardtitle">Day and night are not the same station</h3>
+      <p class="sub" id="dnSub"></p>
+      <div class="cols2">
+        <div>
+          <h4 class="minih">Plays mostly after dark</h4>
+          <div class="ranklist" id="nightList"></div>
+        </div>
+        <div>
+          <h4 class="minih">Plays mostly in daylight</h4>
+          <div class="ranklist" id="dayList2"></div>
+        </div>
+      </div>
+      <p class="sub" id="dnFoot"></p>
+    </div>
   </section>
 
-  <footer class="site">
-    <p>Want the data? Grab the full play log — one row per play, columns
-       <code>played_at_utc, artist, song</code> — as
-       <a href="data/plays.csv" download>CSV</a> or
-       <a href="data/plays.parquet" download>Parquet</a>. Refreshed daily
-       with the rest of the site; timestamps are UTC.</p>
-    <p id="footGaps"></p>
-    <p>Artwork via <a href="https://coverartarchive.org">Cover Art Archive</a> /
-       <a href="https://musicbrainz.org">MusicBrainz</a> and album art from the stream's metadata.
-       Times recorded in UTC and shown in your browser's timezone.
-       Schedule segments based on the on-air schedule published May 2025 (Central Time).</p>
-  </footer>
-</div>
+  <section id="browseSection">
+    <h2>Browse everything</h2>
+    <p class="sub">All <span id="browseCount"></span> of it. Search a song, an artist, a
+       half-remembered lyric fragment that happens to be in a title.</p>
+    <div class="card">
+      <div class="filters">
+        <input type="search" id="browseQ" placeholder="Search songs and artists…" autocomplete="off">
+        <button class="chip" data-mode="songs" aria-pressed="true">Songs</button>
+        <button class="chip" data-mode="artists">Artists</button>
+      </div>
+      <div class="ranklist" id="browseList"></div>
+      <button class="morebtn" id="browseMore">Show more</button>
+    </div>
+  </section>
 
-<dialog id="songModal">
-  <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
-  <div class="modal-body" id="modalBody"></div>
-</dialog>
+</div><!-- /#home -->
+
+<div id="detail" hidden></div>
+
+<footer class="site">
+  <p>Want the data? Grab the full play log — one row per play, columns
+     <code>played_at_utc, artist, song</code> — as
+     <a href="data/plays.csv" download>CSV</a> or
+     <a href="data/plays.parquet" download>Parquet</a>. Refreshed daily
+     with the rest of the site; timestamps are UTC.</p>
+  <p id="footGaps"></p>
+  <p>Artwork via <a href="https://coverartarchive.org">Cover Art Archive</a> /
+     <a href="https://musicbrainz.org">MusicBrainz</a> and album art from the stream's metadata.
+     Times recorded in UTC and shown in your browser's timezone, except the
+     day/night analysis, which uses Central time — the station's own clock.</p>
+</footer>
+</div>
 
 <div class="tooltip" id="tip"></div>
 <script src="app.js"></script>
