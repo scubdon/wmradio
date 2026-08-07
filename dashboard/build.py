@@ -7,6 +7,8 @@ Emits into dashboard/site/data/:
   plays.json  — {"t0": <epoch-minute>, "dt": [...], "s": [...]}
                 delta-encoded UTC epoch-minutes + song ids, ascending
   meta.json   — totals, recording gaps, schedule, rotation inference results
+  plays.csv / plays.parquet — full play log (played_at_utc, artist, song)
+                for public download; linked from the site footer
 
 Also copies the 150px artwork thumbs used by the site into site/artwork/.
 
@@ -193,6 +195,18 @@ def main():
     (DATA_OUT / "plays.json").write_text(
         json.dumps({"t0": int(t0), "dt": dts, "s": sids}, separators=(",", ":")))
     (DATA_OUT / "meta.json").write_text(json.dumps(meta, separators=(",", ":")))
+
+    # --- public download files (times are naive UTC, like the DB) ---
+    con.execute(f"""
+        COPY (SELECT date_trunc('second', ts_utc) AS played_at_utc, artist, song
+              FROM plays ORDER BY ts_utc)
+        TO '{DATA_OUT / "plays.csv"}' (HEADER, DELIMITER ',')
+    """)
+    con.execute(f"""
+        COPY (SELECT date_trunc('second', ts_utc) AS played_at_utc, artist, song
+              FROM plays ORDER BY ts_utc)
+        TO '{DATA_OUT / "plays.parquet"}' (FORMAT PARQUET, COMPRESSION ZSTD)
+    """)
 
     # --- artwork thumbs for songs the site knows about ---
     copied = missing = 0
