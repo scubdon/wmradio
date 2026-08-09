@@ -17,6 +17,8 @@
   --seq-400: #63a2e8; --seq-500: #3781da; --seq-600: #1d63b4; --seq-700: #114684;
   --accent-ink: #1c5cab;
   --gap-band: rgba(137, 135, 129, 0.12);
+  --cal-empty: #eceae3;   /* day with no play */
+  --cal-out: #cfcdc3;     /* day the logger was down — absence of data, not of plays */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -39,6 +41,8 @@
     --seq-400: #21659f; --seq-500: #2a7fc4; --seq-600: #3d9ce4; --seq-700: #5fbaff;
     --accent-ink: #86b6ef;
     --gap-band: rgba(137, 135, 129, 0.15);
+    --cal-empty: #272725;
+    --cal-out: #46453f;
   }
 }
 
@@ -178,6 +182,13 @@ input[type="search"] {
 .heat-scale { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--muted); font-size: 12px; }
 .heat-scale .swatches { display: flex; height: 10px; border-radius: 3px; overflow: hidden; }
 .heat-scale .swatches i { width: 22px; }
+
+/* calendar (GitHub-style day grid) */
+.chart-svg.cal text { font-size: 14px; }   /* viewBox units — the svg scales down */
+.cal-legend { flex-wrap: wrap; }
+.cal-legend .swatches i { width: 13px; box-shadow: inset 0 0 0 0.5px var(--border); }
+.cal-legend .outkey { display: flex; align-items: center; gap: 5px; margin-left: 8px; }
+.cal-legend .outkey i { width: 11px; height: 10px; border-radius: 2px; }
 
 details.tablewrap { margin-top: 12px; }
 details.tablewrap summary { color: var(--muted); font-size: 13px; cursor: pointer; }
