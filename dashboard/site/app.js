@@ -24,8 +24,17 @@ let ARTIST_RANK = [];       // artist names, most-played first
 let rangeDays = 30;         // top-section scope
 let topLimit = 15;
 
+// Per-song derived stats, filled once at boot (see computeSongStats). Anything
+// that only needs a single pass over the log is computed here rather than
+// precomputed in build.py — it keeps the payload flat as the log grows.
+let S_FIRST, S_LAST;        // Float64Array: first / last play, epoch ms
+let S_N7, S_N30, S_N90;     // Int32Array: plays in the trailing 7 / 30 / 90 days
+let S_NWIN, S_NPREV;        // Int32Array: plays in this and the previous rotation window
+let PREV_SAME;              // Int32Array: index of the previous play of the same song, or -1
+
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+const shortDateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 const dtFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit" });
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -72,10 +81,10 @@ const keyMonthFmt = new Intl.DateTimeFormat(undefined,
   ARTIST_RANK = [...ARTISTS.entries()].sort((a, b) => b[1].total - a[1].total).map(e => e[0]);
   ARTIST_RANK.forEach((name, i) => { ARTISTS.get(name).rank = i + 1; });
 
-  $("#updatedLine").textContent =
-    `${fmtInt(META.total_plays)} plays logged · ${META.first_day} → ${META.last_day} · updated ${dateFmt.format(new Date(META.generated_at))}`;
+  computeSongStats();
 
-  renderKPIs();
+  renderStatLine();
+  renderFindings();
   renderRecent();
   initRangeFilters();
   renderTopSection();
@@ -83,7 +92,9 @@ const keyMonthFmt = new Intl.DateTimeFormat(undefined,
   initWrapped();
   initDayView();
   renderRotation();
+  renderRecords();
   initBrowse();
+  renderDataSection();
   renderFooter();
   document.addEventListener("click", onGlobalClick);
   window.addEventListener("hashchange", route);
@@ -119,34 +130,108 @@ function rampColors() {
     .map(v => cs.getPropertyValue(v).trim());
 }
 
-// ---------- KPIs ----------
-function renderKPIs() {
-  const days = Math.round((T[N - 1] - T[0]) / DAY_MS);
-  const kpis = [
-    ["Songs logged", fmtInt(META.total_plays), "one row per play"],
-    ["Distinct songs", fmtInt(META.n_songs), null],
-    ["Distinct artists", fmtInt(META.n_artists), null],
-    ["Days on record", fmtInt(days), `since ${META.first_day}`],
+// ---------- per-song stats ----------
+// Windows are measured back from the last logged play, not from wall-clock
+// now, so a stale build reports "this week" against the week it actually has.
+function computeSongStats() {
+  const M = SONGS.length;
+  S_FIRST = new Float64Array(M);
+  S_LAST = new Float64Array(M);
+  S_N7 = new Int32Array(M); S_N30 = new Int32Array(M); S_N90 = new Int32Array(M);
+  S_NWIN = new Int32Array(M); S_NPREV = new Int32Array(M);
+  PREV_SAME = new Int32Array(N).fill(-1);
+
+  const win = META.rotation.window_days;
+  const end = T[N - 1];
+  const c7 = end - 7 * DAY_MS, c30 = end - 30 * DAY_MS, c90 = end - 90 * DAY_MS;
+  const cWin = end - win * DAY_MS, cPrev = end - 2 * win * DAY_MS;
+  const lastIdx = new Int32Array(M).fill(-1);
+
+  for (let i = 0; i < N; i++) {
+    const s = SID[i], t = T[i];
+    if (lastIdx[s] < 0) S_FIRST[s] = t; else PREV_SAME[i] = lastIdx[s];
+    lastIdx[s] = i;
+    S_LAST[s] = t;
+    if (t >= c90) S_N90[s]++;
+    if (t >= c30) S_N30[s]++;
+    if (t >= c7) S_N7[s]++;
+    if (t >= cWin) S_NWIN[s]++;
+    else if (t >= cPrev) S_NPREV[s]++;
+  }
+}
+
+// The same thresholds build.py uses for the rotation pool, so a song's badge
+// can never disagree with the tier it appears under.
+const STATUSES = [
+  ["in", "In rotation", "at least 3 plays in the last four weeks"],
+  ["fading", "Just dropped", "was in rotation last month, isn't now"],
+  ["recurrent", "Recurrent", "still turns up, but below rotation pace"],
+  ["dormant", "Dormant", "nothing in 90 days"],
+];
+function statusOf(sid) {
+  const min = META.rotation.min_plays;
+  if (S_NWIN[sid] >= min) return "in";
+  if (S_NPREV[sid] >= min) return "fading";
+  return S_N90[sid] > 0 ? "recurrent" : "dormant";
+}
+const statusLabel = k => STATUSES.find(s => s[0] === k)[1];
+
+// ---------- headline stats + findings ----------
+function renderStatLine() {
+  const since = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" })
+    .format(new Date(META.first_day + "T12:00:00"));
+  $("#statLine").textContent =
+    `${fmtInt(META.total_plays)} plays · ${fmtInt(META.n_songs)} songs · ` +
+    `${fmtInt(META.n_artists)} artists · tracking since ${since}`;
+  $("#updatedLine").textContent =
+    `${META.first_day} → ${META.last_day} · rebuilt ${dateFmt.format(new Date(META.generated_at))}`;
+}
+
+// The point of the strip: give someone a reason to keep scrolling to the
+// reverse-engineering section, which is the part of this that doesn't exist
+// anywhere else. Each item is a link to the analysis it came from.
+function renderFindings() {
+  const rot = META.rotation, dn = rot.daynight;
+  const locked = (dn.n_night + dn.n_day) / Math.max(1, dn.n_tested);
+  const lastMonth = META.trends[META.trends.length - 2] || META.trends[META.trends.length - 1];
+  const items = [
+    [fmtInt(rot.pool_size), "songs in rotation right now", "#rotationSection"],
+    [`+${rot.n_entered} / −${rot.n_left}`,
+     `swapped in and out in ${rot.window_days} days`, "#changelogWrap"],
+    [pct(locked), "of songs are day-only or night-only", "#dnSub"],
+    [pct(lastMonth[3]), "of airtime came from 50 songs last month", "#trendWrap"],
   ];
-  const wrap = $("#kpis");
-  for (const [label, value, hint] of kpis) {
-    const t = el("div", "card tile");
-    t.append(el("div", "label", label), el("div", "value", value));
-    if (hint) t.append(el("div", "hint", hint));
-    wrap.append(t);
+  const wrap = $("#findings");
+  wrap.replaceChildren();
+  for (const [value, label, href] of items) {
+    const a = el("a", "finding");
+    a.href = href;
+    a.append(el("span", "fv", value), el("span", "fl", label));
+    wrap.append(a);
   }
 }
 
 // ---------- recently played ----------
+// A plain recently-played list is the one thing this dataset makes ordinary.
+// The repeat count is what a listener actually wonders — "didn't I just hear
+// this?" — and it's the cheapest way in to the rest of the analysis.
 function renderRecent() {
   const strip = $("#recentStrip");
   for (let i = N - 1; i >= Math.max(0, N - 100); i--) {
-    const [artist, song, art] = SONGS[SID[i]];
+    const sid = SID[i];
+    const [artist, song, art] = SONGS[sid];
     const b = el("button", "play-tile");
-    b.dataset.sid = SID[i];
+    b.dataset.sid = sid;
     b.append(coverNode(art, song));
     b.append(el("div", "t1", song), el("div", "t2", artist), el("div", "t3", agoLabel(T[i])));
-    b.title = `${song} — ${artist}`;
+
+    const n7 = S_N7[sid];
+    b.append(el("div", "t4", n7 > 1 ? `${n7}× this week` : "once this week"));
+    const prev = PREV_SAME[i];
+    b.title = prev >= 0
+      ? `${song} — ${artist}\nPreviously played ${fmtDur(T[i] - T[prev])} earlier · ` +
+        `${n7} time${n7 === 1 ? "" : "s"} in the last 7 days`
+      : `${song} — ${artist}\nFirst time in the log`;
     strip.append(b);
   }
 }
@@ -429,46 +514,170 @@ function renderWrapped() {
     rec.n += n; if (n > rec.bestN) { rec.best = sid; rec.bestN = n; }
     byArtist.set(a, rec);
   }
-  renderRankList($("#wrapArtists"),
-    [...byArtist.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 10)
-      .map(([name, rec]) => ({ artist: name, n: rec.n, t1: name, t2: "", art: SONGS[rec.best][2] })));
+  const artistTop = [...byArtist.entries()].sort((a, b) => b[1].n - a[1].n);
+  renderRankList($("#wrapArtists"), artistTop.slice(0, 10)
+    .map(([name, rec]) => ({ artist: name, n: rec.n, t1: name, t2: "", art: SONGS[rec.best][2] })));
+
+  if (total) {
+    const [topArtist, topRec] = artistTop[0];
+    const k = ARTISTS.get(topArtist).ids.filter(id => counts.has(id)).length;
+    $("#wrapLede").textContent =
+      `You would have heard “${SONGS[top[0][0]][1]}” about ${fmtInt(top[0][1])} times, and ` +
+      `${topArtist} ${fmtInt(topRec.n)} times across ${k} of their songs.`;
+  } else {
+    $("#wrapLede").textContent = "No plays logged in those hours — try widening the range.";
+  }
+
+  renderWrapSkew(counts, total, start);
+}
+
+// Because dayparting is real, a given shift doesn't just hear less of the
+// station — it hears a different station. This is the comparison that shows it:
+// each song's share of your hours against its share of everyone else's.
+function renderWrapSkew(counts, total, start) {
+  const root = $("#wrapSkew");
+  const rest = new Map();
+  let restTotal = 0;
+  for (let i = start; i < N; i++) { rest.set(SID[i], (rest.get(SID[i]) || 0) + 1); restTotal++; }
+
+  const rows = [];
+  for (const [sid, n] of counts) {
+    if (n < 8) continue;   // below this, the ratio is noise dressed up as a finding
+    const mine = n / total;
+    const theirs = (rest.get(sid) - n) / Math.max(1, restTotal - total);
+    if (theirs <= 0) continue;
+    rows.push({ sid, n, ratio: mine / theirs });
+  }
+  rows.sort((a, b) => b.ratio - a.ratio);
+
+  $("#wrapSkewSub").textContent = rows.length
+    ? `How much more often your hours got each song than the rest of the week did. ` +
+      `Anything near 1× is just the station; the top of this list is your shift.`
+    : `Not enough plays in those hours to compare against the rest of the week.`;
+
+  renderRankList(root, rows.slice(0, 8).map(r => ({
+    sid: r.sid, n: r.ratio, t1: SONGS[r.sid][1],
+    t2: `${SONGS[r.sid][0]} · ${fmtInt(r.n)} plays on your hours`,
+    art: SONGS[r.sid][2], nLabel: `${r.ratio.toFixed(1)}×` })));
+  if (!rows.length) root.replaceChildren();
 }
 
 // ---------- one day view ----------
+// A silence this long is never one track running over; on this stream it is
+// either the logger dropping out or a stretch of non-music programming. Either
+// way it's the kind of thing you only see by reading a day in order.
+const DAY_QUIET_MIN = 45 * 60000;
+// "Didn't that just play?" — the threshold below which a repeat is surprising.
+const QUICK_RETURN_MS = 4 * 3600000;
+
 function initDayView() {
   const pick = $("#dayPick");
-  const last = new Date(T[N - 1]);
-  pick.value = isoLocal(last);
+  pick.value = isoLocal(new Date(T[N - 1]));
   pick.min = isoLocal(new Date(T[0]));
   pick.max = pick.value;
   pick.addEventListener("change", renderDayView);
+
+  const step = n => {
+    const iso = isoFromKey(dayKeyOf(pick.value) + n);
+    if (iso < pick.min || iso > pick.max) return;
+    pick.value = iso;
+    renderDayView();
+  };
+  $("#dayPrev").addEventListener("click", () => step(-1));
+  $("#dayNext").addEventListener("click", () => step(1));
+  $("#dayRandom").addEventListener("click", () => {
+    // Pick from days that actually have plays, so "random" never lands in an
+    // outage and looks broken.
+    pick.value = isoFromKey(LDAY[Math.floor(Math.random() * N)]);
+    renderDayView();
+  });
   renderDayView();
 }
 const isoLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// A day key is the epoch-day of a *local* calendar date, so it has to be read
+// back with UTC getters — the same trap the daily chart hit. Doing this with
+// local getters slips a day at negative offsets, which made Prev skip two days
+// and Next do nothing at all.
+const isoFromKey = k => {
+  const d = dateFromKey(k);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-` +
+         `${String(d.getUTCDate()).padStart(2, "0")}`;
+};
+
 function renderDayView() {
-  const key = dayKeyOf($("#dayPick").value);
+  const pick = $("#dayPick");
+  const key = dayKeyOf(pick.value);
   const list = $("#dayList");
   list.replaceChildren();
-  let found = 0;
-  for (let i = 0; i < N; i++) {
-    if (LDAY[i] !== key) continue;
-    found++;
-    const [artist, song, art] = SONGS[SID[i]];
+  $("#dayPrev").disabled = isoFromKey(key - 1) < pick.min;
+  $("#dayNext").disabled = isoFromKey(key + 1) > pick.max;
+
+  const idx = [];
+  for (let i = firstIdxAtOrAfter(key * DAY_MS - 14 * 3600000); i < N; i++) {
+    if (LDAY[i] > key) break;
+    if (LDAY[i] === key) idx.push(i);
+  }
+  if (!idx.length) {
+    $("#daySummary").replaceChildren();
+    list.append(el("p", "sub", "No plays recorded on this date — likely a logger gap."));
+    return;
+  }
+
+  const seen = new Map(), artistSeen = new Map();
+  let repeats = 0, quiet = 0, quickest = null;
+
+  idx.forEach((i, pos) => {
+    const sid = SID[i], [artist, song, art] = SONGS[sid];
+
+    if (pos) {
+      const gap = T[i] - T[idx[pos - 1]];
+      if (gap >= DAY_QUIET_MIN) {
+        quiet++;
+        list.append(el("div", "daygap", `${fmtDur(gap)} with nothing logged`));
+      }
+    }
+
     const row = el("button", "dayrow");
-    row.dataset.sid = SID[i];
-    const t = el("time", null, timeFmt.format(new Date(T[i])));
+    row.dataset.sid = sid;
     const meta = el("div", "meta");
     meta.append(el("span", null, song + " "), el("span", "a", "· " + artist));
-    row.append(t, coverNode(art, song), meta);
+
+    const prevPlay = seen.get(sid);
+    if (prevPlay != null) {
+      repeats++;
+      const back = T[i] - prevPlay;
+      if (quickest == null || back < quickest) quickest = back;
+      const tag = el("span", "flag" + (back < QUICK_RETURN_MS ? " hot" : ""),
+                     `again after ${fmtDur(back)}`);
+      meta.append(tag);
+    } else if (artistSeen.has(artist)) {
+      meta.append(el("span", "flag dim", `${artistSeen.get(artist) + 1}${nth(artistSeen.get(artist) + 1)} from ${artist}`));
+    }
+    seen.set(sid, T[i]);
+    artistSeen.set(artist, (artistSeen.get(artist) || 0) + 1);
+
+    row.append(el("time", null, timeFmt.format(new Date(T[i]))), coverNode(art, song), meta);
     list.append(row);
-  }
-  if (!found) list.append(el("p", "sub", "No plays recorded on this date — likely a logger gap."));
+  });
+
+  const bits = [
+    `${fmtInt(idx.length)} plays`,
+    `${fmtInt(seen.size)} distinct songs`,
+    repeats ? `${fmtInt(repeats)} repeats` : "no repeats",
+  ];
+  if (quickest != null) bits.push(`quickest return ${fmtDur(quickest)}`);
+  if (quiet) bits.push(`${quiet} silent stretch${quiet === 1 ? "" : "es"}`);
+  $("#daySummary").replaceChildren(el("p", "sub", bits.join(" · ")));
 }
+const nth = n => n % 10 === 1 && n % 100 !== 11 ? "st"
+              : n % 10 === 2 && n % 100 !== 12 ? "nd"
+              : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th";
 
 // ---------- rotation ----------
 function renderRotation() {
   const rot = META.rotation, dn = rot.daynight;
 
+  $("#rotPlayCount").textContent = fmtInt(META.total_plays);
   $("#rotationSub").textContent =
     `Over the last ${rot.window_days} days the stream played ${fmtInt(rot.window_plays)} songs drawn ` +
     `from ${fmtInt(rot.distinct_songs)} distinct titles. How often each one came round:`;
@@ -499,14 +708,38 @@ function renderRotation() {
     `Nothing here is announced — it's inferred from play counts. A song crossing from ` +
     `“Occasional” to “Regular” is the station adding it to rotation; the reverse is it being retired.`;
 
+  methodology($("#methRotation"), [
+    ["What counts as “in rotation”",
+     `A song is in the rotation pool if it was played at least ${rot.min_plays} times in the ` +
+     `trailing ${rot.window_days} days. That's it — no smoothing, no decay, no manual list. ` +
+     `${rot.window_days} days is long enough that a genuinely light-rotation track still ` +
+     `clears the bar, and short enough to react when the station changes its mind.`],
+    ["Where the tier boundaries come from",
+     `Tiers are cuts on the same play count, chosen so each one describes a listening ` +
+     `experience rather than a statistic: ${rot.tiers.map(t => `${t.label} is ${t.blurb}`).join(", ")}. ` +
+     `A track sitting on a boundary will flip between tiers between refreshes.`],
+    ["What “just added” and “dropped” mean",
+     `The same ${rot.min_plays}-play test is applied to the previous ${rot.window_days}-day ` +
+     `window and the two pools are compared. Applying it symmetrically matters: a one-sided ` +
+     `test would count every song whose count merely wobbled across the threshold. ` +
+     `“Just added” is not the same as new — a catalogue track returning after a year away ` +
+     `enters the pool exactly like a current single does.`],
+    ["What this can't tell you",
+     `Nothing here uses show names, the published schedule, or any Walmart-supplied ` +
+     `metadata, because none of it can be verified against the log. These are observed ` +
+     `play frequencies, and “rotation” is the most economical explanation for them — ` +
+     `not a document anyone published.`],
+  ]);
+
   // just added
   $("#enteredSub").textContent =
-    `Counting a song as “in rotation” once it reaches ${rot.min_plays} plays in a ` +
-    `${rot.window_days}-day window: ${fmtInt(rot.n_entered)} songs have entered since the previous ` +
-    `window and ${fmtInt(rot.n_left)} have dropped out. The newcomers getting the most airtime:`;
+    `${fmtInt(rot.n_entered)} songs have crossed into the pool since the previous window. ` +
+    `The newcomers getting the most airtime:`;
   renderRankList($("#enteredList"), rot.entered.slice(0, 12).map(([sid, n]) => ({
     sid, n, t1: SONGS[sid][1], t2: SONGS[sid][0], art: SONGS[sid][2], nLabel: `${n}×` })));
 
+  renderDropped();
+  renderChangelog();
   renderTrends();
 
   // day / night
@@ -526,6 +759,165 @@ function renderRotation() {
   $("#dnFoot").textContent =
     `Percentages are each song's share of plays falling in its column's hours. Songs at 0% ` +
     `overnight across 20-plus plays aren't a coincidence — they're never scheduled after dark.`;
+
+  methodology($("#methDayNight"), [
+    ["Why Central time",
+     `Night is 11pm–6am on the station's own clock, not yours. Walmart Radio is programmed ` +
+     `out of Bentonville and the schedule it used to publish was in Central, so a daypart ` +
+     `boundary drawn in your timezone would smear across the real one. This is the only ` +
+     `analysis on the page that doesn't use your local time.`],
+    ["The test",
+     `Each song played at least ${dn.min_plays} times in the trailing ${dn.window_days} days ` +
+     `gets the share of its plays that landed at night, compared against the station-wide ` +
+     `share of ${pct(dn.baseline)} with a normal-approximation z-test. Songs past ±2 are ` +
+     `counted as skewed, which by construction misfires on about 2.3% of songs in each ` +
+     `direction — hence the ${dn.expected}-per-side figure that chance would give.`],
+    ["Why this is evidence of separate pools",
+     `Not the individual songs — the spread. If one playlist ran around the clock, the ` +
+     `z-scores would have a standard deviation near 1. It is ${dn.z_sd}. Something is ` +
+     `partitioning the catalogue by time of day.`],
+  ]);
+}
+
+// Reusable ⓘ body: a list of question → answer pairs, so a claim on the page
+// is always one click from the rule that produced it.
+function methodology(root, pairs) {
+  root.replaceChildren();
+  for (const [q, a] of pairs) {
+    root.append(el("h4", "methq", q), el("p", "metha", a));
+  }
+}
+
+// ---------- dropped from rotation ----------
+// The inverse of "just added", and the more revealing half: you can watch a
+// track being retired, and see how hard it was working right before it was.
+function renderDropped() {
+  const rot = META.rotation;
+  $("#droppedSub").textContent =
+    `${fmtInt(rot.n_left)} songs fell below ${rot.min_plays} plays this window after clearing ` +
+    `it last window. Ranked by how hard they were being played on the way out:`;
+
+  const tbl = el("table", "tbl");
+  const hr = el("tr");
+  for (const [h, cls, title] of [
+    ["Song", null, null],
+    ["Was", "num", "Plays per day in the previous window"],
+    ["Now", "num", "Plays in the current window"],
+    ["Last", "num", "Most recent play"],
+    ["Age", "num", "Days between its first and last play in the log"],
+  ]) {
+    const th = el("th", cls, h);
+    if (title) th.title = title;
+    hr.append(th);
+  }
+  tbl.append(hr);
+
+  for (const [sid, nPrev, perDay, nNow, last, days] of rot.dropped.slice(0, 12)) {
+    const tr = el("tr", "clickrow");
+    tr.dataset.sid = sid;
+    const t = el("td");
+    t.append(el("div", "dt1", SONGS[sid][1]), el("div", "dt2", SONGS[sid][0]));
+    tr.append(t,
+      el("td", "num", `${perDay}/day`),
+      el("td", "num", nNow ? `${nNow}×` : "—"),
+      el("td", "num", shortDateFmt.format(new Date(last + "T12:00:00"))),
+      el("td", "num", `${fmtInt(days)}d`));
+    tbl.append(tr);
+  }
+  $("#droppedList").replaceChildren(tbl);
+}
+
+// ---------- rotation changelog ----------
+function renderChangelog() {
+  const cl = META.changelog;
+  if (!cl || cl.length < 2) return;
+  const totIn = cl.reduce((a, r) => a + r[1], 0), totOut = cl.reduce((a, r) => a + r[2], 0);
+  $("#changelogSub").textContent =
+    `The pool test re-run every week for ${cl.length} weeks. ${fmtInt(totIn)} entries and ` +
+    `${fmtInt(totOut)} exits over that stretch, against a pool that has stayed within a few ` +
+    `hundred titles of ${fmtInt(cl[cl.length - 1][3])} — the station is not growing its ` +
+    `library so much as continuously cycling it.`;
+
+  const W = 900, H = 220, left = 42, right = 44, top = 12, bottom = 26;
+  const iw = W - left - right, ih = H - top - bottom;
+  const maxBar = Math.max(...cl.map(r => Math.max(r[1], r[2])));
+  const maxPool = Math.max(...cl.map(r => r[3]));
+  const bw = iw / cl.length;
+  const mid = top + ih / 2;
+  const yBar = v => (v / maxBar) * (ih / 2);
+  const yPool = v => top + ih - (v / maxPool) * ih;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "Songs entering and leaving rotation each week" });
+  svg.append(svgEl("line", { x1: left, x2: W - right, y1: mid, y2: mid, class: "axis-line" }));
+
+  cl.forEach((r, i) => {
+    const [wk, nIn, nOut, pool] = r;
+    const x = left + i * bw + bw * 0.15, w = Math.max(1.5, bw * 0.7);
+    for (const [v, up] of [[nIn, true], [nOut, false]]) {
+      if (!v) continue;
+      const h = Math.max(1.5, yBar(v));
+      const rect = svgEl("rect", { x, y: up ? mid - h : mid, width: w, height: h,
+        rx: 1.5, fill: up ? "var(--series-1)" : "var(--series-2)" });
+      rect.dataset.tip = JSON.stringify({
+        v: `${up ? "+" : "−"}${v} song${v === 1 ? "" : "s"} ${up ? "entered" : "left"}`,
+        l: `week ending ${wk} · pool ${fmtInt(pool)}` });
+      svg.append(rect);
+    }
+    if (i % 4 === 0)
+      svg.append(svgText(left + i * bw + bw / 2, H - 7,
+        keyMonthFmt.format(new Date(wk + "T12:00:00")), "middle"));
+  });
+
+  let d = "";
+  cl.forEach((r, i) => { d += `${i ? " L" : "M"} ${(left + i * bw + bw / 2).toFixed(1)} ${yPool(r[3]).toFixed(1)}`; });
+  svg.append(svgEl("path", { d, fill: "none", stroke: "var(--ink-2)", "stroke-width": 1.4,
+    "stroke-dasharray": "4 3", opacity: 0.75 }));
+  svg.append(svgText(W - right + 6, yPool(cl[cl.length - 1][3]) + 4,
+    fmtInt(cl[cl.length - 1][3]), "start"));
+  svg.append(svgText(left - 6, mid - ih / 2 + 10, "in", "end"));
+  svg.append(svgText(left - 6, mid + ih / 2, "out", "end"));
+
+  $("#changelogWrap").replaceChildren(svg);
+  attachCellTips(svg, $("#changelogWrap"));
+
+  const lg = $("#changelogLegend");
+  lg.replaceChildren();
+  [["var(--series-1)", "Entered rotation that week"],
+   ["var(--series-2)", "Left rotation that week"],
+   ["var(--ink-2)", "Total pool size"]].forEach(([c, label]) => {
+    const item = el("span", "lgi");
+    const dot = el("i"); dot.style.background = c;
+    item.append(dot, document.createTextNode(label));
+    lg.append(item);
+  });
+
+  const tbl = el("table", "tbl");
+  const hr = el("tr");
+  for (const h of ["Week ending", "Entered", "Left", "Pool"]) hr.append(el("th", null, h));
+  tbl.append(hr);
+  for (const [wk, nIn, nOut, pool] of cl.slice().reverse()) {
+    const tr = el("tr");
+    tr.append(el("td", null, wk), el("td", "num", `+${nIn}`),
+              el("td", "num", `−${nOut}`), el("td", "num", fmtInt(pool)));
+    tbl.append(tr);
+  }
+  $("#changelogTable").replaceChildren(tbl);
+}
+
+// ---------- records & oddities ----------
+function renderRecords() {
+  const wrap = $("#recordsList");
+  wrap.replaceChildren();
+  for (const r of META.records) {
+    const card = el(r.sid != null || r.artist ? "button" : "div", "card record");
+    if (r.sid != null) card.dataset.sid = r.sid;
+    else if (r.artist) card.dataset.artist = r.artist;
+    card.append(el("div", "rlabel", r.title),
+                el("div", "rvalue", r.value),
+                el("div", "rsub", r.sub));
+    wrap.append(card);
+  }
 }
 
 function renderTrends() {
@@ -572,47 +964,225 @@ function renderTrends() {
   });
 }
 
-// ---------- browse ----------
-let browseMode = "songs", browseLimit = 40, browseQ = "";
+// ---------- dataset explorer ----------
+// Deliberately not a BI tool: search, a status filter, and a sort on every
+// column. That's enough to answer "which songs haven't played since 2024" or
+// "what's still active but barely" without leaving the page.
+let browseMode = "songs", browseLimit = 50, browseQ = "";
+let browseStatus = "all", browseSort = "n", browseDesc = true;
+
+const SONG_COLS = [
+  ["t1", "Song", "text"],
+  ["t2", "Artist", "text"],
+  ["first", "First heard", "date"],
+  ["last", "Last heard", "date"],
+  ["n", "Plays", "num"],
+  ["n30", "Last 30d", "num"],
+  ["status", "Status", "status"],
+];
+const ARTIST_COLS = [
+  ["t1", "Artist", "text"],
+  ["k", "Songs", "num"],
+  ["first", "First heard", "date"],
+  ["last", "Last heard", "date"],
+  ["n", "Plays", "num"],
+  ["n30", "Last 30d", "num"],
+  ["inrot", "In rotation", "num"],
+];
+
 function initBrowse() {
   $("#browseCount").textContent = `${fmtInt(META.n_songs)} songs by ${fmtInt(META.n_artists)} artists`;
+
+  const sf = $("#statusFilters");
+  for (const [key, label] of [["all", "All"], ...STATUSES.map(s => [s[0], s[1]])]) {
+    const b = el("button", "chip", label);
+    b.dataset.status = key;
+    b.setAttribute("aria-pressed", key === "all");
+    const help = STATUSES.find(s => s[0] === key);
+    if (help) b.title = help[2];
+    sf.append(b);
+  }
+  sf.addEventListener("click", e => {
+    const btn = e.target.closest(".chip"); if (!btn) return;
+    for (const c of sf.querySelectorAll(".chip")) c.setAttribute("aria-pressed", "false");
+    btn.setAttribute("aria-pressed", "true");
+    browseStatus = btn.dataset.status;
+    browseLimit = 50;
+    renderBrowse();
+  });
+
   $("#browseQ").addEventListener("input", e => {
     browseQ = e.target.value.trim().toLowerCase();
-    browseLimit = 40;
+    browseLimit = 50;
     renderBrowse();
   });
   $("#browseSection .filters").addEventListener("click", e => {
-    const btn = e.target.closest(".chip"); if (!btn) return;
-    for (const c of btn.parentElement.querySelectorAll(".chip")) c.setAttribute("aria-pressed", "false");
+    const btn = e.target.closest("[data-mode]"); if (!btn) return;
+    for (const c of btn.parentElement.querySelectorAll("[data-mode]"))
+      c.setAttribute("aria-pressed", "false");
     btn.setAttribute("aria-pressed", "true");
     browseMode = btn.dataset.mode;
-    browseLimit = 40;
+    browseLimit = 50;
+    browseSort = "n"; browseDesc = true;
+    sf.hidden = browseMode === "artists";
     renderBrowse();
   });
-  $("#browseMore").addEventListener("click", () => { browseLimit += 100; renderBrowse(); });
+  $("#browseMore").addEventListener("click", () => { browseLimit += 200; renderBrowse(); });
   renderBrowse();
 }
-function renderBrowse() {
-  let rows;
+
+function browseRows() {
   if (browseMode === "songs") {
-    rows = SONGS.map(([artist, song, art, n], sid) => ({ sid, n, t1: song, t2: artist, art }));
+    let rows = SONGS.map(([artist, song, art, n], sid) => ({
+      sid, art, n, t1: song, t2: artist,
+      first: S_FIRST[sid], last: S_LAST[sid], n30: S_N30[sid], status: statusOf(sid),
+    }));
+    if (browseStatus !== "all") rows = rows.filter(r => r.status === browseStatus);
     if (browseQ) rows = rows.filter(r =>
       r.t1.toLowerCase().includes(browseQ) || r.t2.toLowerCase().includes(browseQ));
-  } else {
-    rows = ARTIST_RANK.map(name => {
-      const a = ARTISTS.get(name);
-      const best = a.ids.reduce((p, c) => SONGS[c][3] > SONGS[p][3] ? c : p, a.ids[0]);
-      return { artist: name, n: a.total, t1: name,
-               t2: `${fmtInt(a.ids.length)} song${a.ids.length > 1 ? "s" : ""}`,
-               art: SONGS[best][2] };
-    });
-    if (browseQ) rows = rows.filter(r => r.t1.toLowerCase().includes(browseQ));
+    return rows;
   }
-  renderRankList($("#browseList"), rows.slice(0, browseLimit), { max: rows.length ? rows[0].n : 1 });
-  if (!rows.length) $("#browseList").append(el("p", "sub", "Nothing matches that."));
+  let rows = ARTIST_RANK.map(name => {
+    const a = ARTISTS.get(name);
+    const best = a.ids.reduce((p, c) => SONGS[c][3] > SONGS[p][3] ? c : p, a.ids[0]);
+    return {
+      artist: name, t1: name, art: SONGS[best][2], n: a.total, k: a.ids.length,
+      first: Math.min(...a.ids.map(i => S_FIRST[i])),
+      last: Math.max(...a.ids.map(i => S_LAST[i])),
+      n30: a.ids.reduce((s, i) => s + S_N30[i], 0),
+      inrot: a.ids.filter(i => statusOf(i) === "in").length,
+    };
+  });
+  if (browseQ) rows = rows.filter(r => r.t1.toLowerCase().includes(browseQ));
+  return rows;
+}
+
+function renderBrowse() {
+  const cols = browseMode === "songs" ? SONG_COLS : ARTIST_COLS;
+  const rows = browseRows();
+  const dir = browseDesc ? -1 : 1;
+  rows.sort((a, b) => {
+    const x = a[browseSort], y = b[browseSort];
+    if (typeof x === "string") return dir * (x < y ? 1 : x > y ? -1 : 0);
+    return dir * ((x || 0) - (y || 0));
+  });
+
+  const tbl = el("table", "tbl exp");
+  const hr = el("tr");
+  for (const [key, label, kind] of cols) {
+    const th = el("th", kind === "num" ? "num sortable" : "sortable", label);
+    th.dataset.sort = key;
+    if (browseSort === key) {
+      th.classList.add("sorted");
+      th.append(el("span", "arrow", browseDesc ? " ↓" : " ↑"));
+    }
+    hr.append(th);
+  }
+  tbl.append(hr);
+
+  for (const r of rows.slice(0, browseLimit)) {
+    const tr = el("tr", "clickrow");
+    if (r.sid != null) tr.dataset.sid = r.sid; else tr.dataset.artist = r.artist;
+    for (const [key, , kind] of cols) {
+      if (key === "t1") {
+        const td = el("td", "namecell");
+        td.append(coverNode(r.art, r.t1, "sm"), el("span", null, r.t1));
+        tr.append(td);
+      } else if (kind === "date") {
+        tr.append(el("td", null, keyDateFmt.format(new Date(r[key]))));
+      } else if (kind === "status") {
+        const td = el("td");
+        td.append(el("span", "badge s-" + r[key], statusLabel(r[key])));
+        tr.append(td);
+      } else {
+        tr.append(el("td", kind === "num" ? "num" : null,
+                     typeof r[key] === "number" ? fmtInt(r[key]) : r[key]));
+      }
+    }
+    tbl.append(tr);
+  }
+
+  const root = $("#browseTable");
+  root.replaceChildren(tbl);
+  if (!rows.length) root.append(el("p", "sub", "Nothing matches that."));
+  tbl.addEventListener("click", e => {
+    const th = e.target.closest("[data-sort]"); if (!th) return;
+    if (browseSort === th.dataset.sort) browseDesc = !browseDesc;
+    else { browseSort = th.dataset.sort; browseDesc = th.dataset.sort !== "t1" && th.dataset.sort !== "t2"; }
+    browseLimit = Math.max(50, browseLimit);
+    renderBrowse();
+  });
+
   const btn = $("#browseMore");
   btn.hidden = browseLimit >= rows.length;
-  btn.textContent = `Show ${Math.min(100, Math.max(0, rows.length - browseLimit))} more of ${fmtInt(rows.length)}`;
+  btn.textContent = `Show ${Math.min(200, Math.max(0, rows.length - browseLimit))} more of ${fmtInt(rows.length)}`;
+}
+
+// ---------- use the data ----------
+function renderDataSection() {
+  const c = META.coverage;
+  const mb = b => `${(b / 1048576).toFixed(1)} MB`;
+
+  const dl = $("#downloads");
+  dl.replaceChildren();
+  for (const [file, label, note, bytes] of [
+    ["data/plays.csv", "plays.csv", "Plain text, one header row.", c.csv_bytes],
+    ["data/plays.parquet", "plays.parquet", "zstd-compressed, typed timestamps.", c.parquet_bytes],
+  ]) {
+    const a = el("a", "dlrow");
+    a.href = file;
+    a.setAttribute("download", "");
+    a.append(el("span", "dlname", label),
+             el("span", "dlmeta", `${mb(bytes)} · ${fmtInt(c.rows)} rows`),
+             el("span", "dlnote", note));
+    dl.append(a);
+  }
+
+  const stats = $("#coverageStats");
+  stats.replaceChildren();
+  for (const [v, l] of [
+    [pct(c.uptime), "of hours have a play"],
+    [fmtInt(c.span_days), "days of span"],
+    [fmtInt(c.n_outages), "logger outages"],
+    [`${fmtInt(c.outage_hours)}h`, "lost to outages"],
+    [fmtInt(c.blank_days), "days with nothing at all"],
+    [dateFmt.format(new Date(META.generated_at)), "last refreshed"],
+  ]) {
+    const d = el("div");
+    d.append(el("div", "v", v), el("div", "l", l));
+    stats.append(d);
+  }
+
+  // The honest version of the coverage number. Most of the missing time is not
+  // the logger failing, and saying otherwise would misdescribe the dataset.
+  methodology($("#coverageNote"), [
+    ["How coverage is measured",
+     `The share of clock hours between the first and last play that contain at least one ` +
+     `logged track change. ${fmtInt(c.covered_hours)} of ${fmtInt(c.span_hours)} hours qualify.`],
+    ["Where the rest of the time went",
+     `${fmtInt(c.n_outages)} genuine outages account for ${fmtInt(c.outage_hours)} hours, the ` +
+     `longest running ${fmtInt(c.longest_outage_hours)} hours. Most of the remainder is ` +
+     `${fmtInt(c.n_quiet)} shorter silences totalling about ${fmtInt(c.quiet_hours)} hours, and ` +
+     `those are not obviously the logger's fault — they cluster on a three-hour cycle on the ` +
+     `station's own clock, which looks like programming rather than failure. They are counted ` +
+     `separately here rather than folded into a downtime figure.`],
+    ["What that means for the file",
+     `Play counts are lower bounds, and gaps in a song's history may be ours rather than the ` +
+     `station's. Anything comparing two periods should check both against the outage list ` +
+     `below first.`],
+  ]);
+
+  const tbl = el("table", "tbl");
+  const hr = el("tr");
+  hr.append(el("th", null, "From"), el("th", null, "To"), el("th", null, "Days"));
+  tbl.append(hr);
+  for (const [a, b] of META.gaps) {
+    const days = Math.round((dayKeyOf(b) - dayKeyOf(a))) + 1;
+    const tr = el("tr");
+    tr.append(el("td", null, a), el("td", null, b), el("td", "num", fmtInt(days)));
+    tbl.append(tr);
+  }
+  $("#outageTable").replaceChildren(tbl);
 }
 
 // ---------- footer ----------
@@ -699,6 +1269,11 @@ function songPage(sid) {
   const link = el("button", "artistlink", artist);
   link.dataset.artist = artist;
   ht.append(link);
+  const st = statusOf(sid);
+  const badge = el("p", "badgeline");
+  badge.append(el("span", "badge s-" + st, statusLabel(st)),
+               el("span", "badgenote", STATUSES.find(s => s[0] === st)[2]));
+  ht.append(badge);
   head.append(ht);
   page.append(head);
 
@@ -714,7 +1289,9 @@ function songPage(sid) {
     if (!overlapsOutage(a, b)) clean.push(b - a);
   }
   const longest = clean.length ? Math.max(...clean) : 0;
-  const median = gaps.length ? gaps.slice().sort((a, b) => a - b)[gaps.length >> 1] : 0;
+  const sorted = gaps.slice().sort((a, b) => a - b);
+  const median = sorted.length ? sorted[sorted.length >> 1] : 0;
+  const shortest = sorted.length ? sorted[0] : 0;
   const peakHour = sc.byHour.indexOf(Math.max(...sc.byHour));
 
   page.append(statRow([
@@ -724,9 +1301,16 @@ function songPage(sid) {
     [dateFmt.format(new Date(first)), "first heard"],
     [dateFmt.format(new Date(last)), "last heard"],
     [median ? fmtDur(median) : null, "typical wait between plays"],
+    [shortest ? fmtDur(shortest) : null, "shortest wait ever"],
     [longest ? fmtDur(longest) : null, "longest silence"],
     [`${hourLabel(peakHour)}–${hourLabel((peakHour + 1) % 24)}`, "favourite hour"],
   ]));
+  page.append(windowRow(sid));
+
+  page.append(scatterCard(sc.times, "Every play, one dot",
+    "Date across, time of day down. Vertical bands are days it was hammered; a " +
+    "dot sitting high or low the whole way across means it only ever gets " +
+    "scheduled at that time."));
 
   page.append(calendarCard(sc.times, "Every day it played",
     "One square per day since logging began. Solid runs are spells in rotation; " +
@@ -797,6 +1381,8 @@ function artistPage(name) {
   card.append(list);
   page.append(card);
 
+  page.append(scatterCard(sc.times, "Every play, one dot",
+    `Date across, time of day down — every ${name} play in the log.`));
   page.append(calendarCard(sc.times, "Every day they played",
     `One square per day since logging began, counting all ${fmtInt(ids.length)} ` +
     `song${ids.length > 1 ? "s" : ""}.`));
@@ -815,6 +1401,73 @@ function twoUp(a, b) {
   const row = el("div", "cols2");
   row.append(a, b);
   return row;
+}
+// Recent-window counts. A total play count says how big a song has been; these
+// say whether it is anything now.
+function windowRow(sid) {
+  const card = el("div", "card windows");
+  card.append(el("h3", "cardtitle", "Lately"));
+  const row = el("div", "statrow flat");
+  for (const [v, l] of [
+    [fmtInt(S_N7[sid]), "last 7 days"],
+    [fmtInt(S_N30[sid]), "last 30 days"],
+    [fmtInt(S_N90[sid]), "last 90 days"],
+    [fmtInt(S_NWIN[sid]), `this ${META.rotation.window_days}-day window`],
+    [fmtInt(S_NPREV[sid]), "the window before"],
+  ]) {
+    const d = el("div");
+    d.append(el("div", "v", v), el("div", "l", l));
+    row.append(d);
+  }
+  card.append(row);
+  const delta = S_NWIN[sid] - S_NPREV[sid];
+  card.append(el("p", "sub", delta === 0
+    ? "Holding steady against the previous window."
+    : `${delta > 0 ? "Up" : "Down"} ${fmtInt(Math.abs(delta))} plays against the previous window.`));
+  return card;
+}
+
+// Every individual play as a dot: date across, time of day down. This is the
+// one chart that shows rotation spells and dayparting at the same time — a
+// song entering rotation appears as a wall of dots, and one that only ever
+// plays overnight sits in a band at the bottom.
+function scatterCard(times, title, note) {
+  const W = 900, H = 240, left = 34, right = 10, top = 10, bottom = 24;
+  const iw = W - left - right, ih = H - top - bottom;
+  const d0 = LDAY[0], d1 = LDAY[N - 1];
+  const x = k => left + ((k - d0) / Math.max(1, d1 - d0)) * iw;
+  const y = mins => top + (mins / 1440) * ih;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": `${title}: one dot per play, date across and time of day down` });
+
+  for (const [ga, gb] of META.gaps) {
+    const xa = x(dayKeyOf(ga)), xb = x(dayKeyOf(gb) + 1);
+    svg.append(svgEl("rect", { x: xa, y: top, width: Math.max(1.5, xb - xa), height: ih,
+      fill: "var(--gap-band)" }));
+  }
+  for (let h = 0; h <= 24; h += 6) {
+    svg.append(svgEl("line", { x1: left, x2: W - right, y1: y(h * 60), y2: y(h * 60),
+      class: h === 0 || h === 24 ? "axis-line" : "grid-line" }));
+    if (h < 24) svg.append(svgText(left - 6, y(h * 60) + 10, hourLabel(h), "end"));
+  }
+  let lastMonth = -1;
+  for (let k = d0; k <= d1; k++) {
+    const dt = dateFromKey(k);
+    if (dt.getUTCDate() <= 3 && dt.getUTCMonth() !== lastMonth && dt.getUTCMonth() % 3 === 0) {
+      lastMonth = dt.getUTCMonth();
+      svg.append(svgText(x(k), H - 7, keyMonthFmt.format(dt), "middle"));
+    }
+  }
+  // Low opacity so overlapping dots build up: a dense spell reads darker
+  // without needing a separate density chart.
+  for (const i of times) {
+    const d = new Date(T[i]);
+    svg.append(svgEl("circle", { cx: x(LDAY[i]).toFixed(1),
+      cy: y(d.getHours() * 60 + d.getMinutes()).toFixed(1),
+      r: 1.7, fill: "var(--series-1)", opacity: 0.55 }));
+  }
+  return chartCard(title, svg, note);
 }
 function recentPlaysCard(times, title) {
   const card = el("div", "card");
