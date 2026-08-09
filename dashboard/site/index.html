@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Recently played at Walmart</title>
-<meta name="description" content="(Almost) every song played on the in-store Walmart Radio stream, logged minute-by-minute since May 2024.">
+<meta name="description" content="(Almost) every song played on the in-store Walmart Radio stream, logged minute-by-minute since May 2024 — and what two years of it reveals about how the station is programmed.">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
 </head>
@@ -23,18 +23,21 @@
            minute-by-minute since May 2024 — the logger has dropped out a handful of
            times, and those gaps are marked in the charts. Not affiliated with Walmart
            — just a log of what the speakers are up to.</p>
-        <p class="fineprint" id="updatedLine">Loading…</p>
+        <p class="statline" id="statLine">Loading…</p>
+        <p class="fineprint" id="updatedLine"></p>
       </div>
     </div>
   </header>
 
-  <section id="kpiSection" aria-label="Headline stats">
-    <div class="kpis" id="kpis"></div>
+  <section id="findingsSection" aria-label="What the log shows">
+    <h2 class="findings-h">What two years of listening shows</h2>
+    <div class="findings" id="findings"></div>
   </section>
 
   <section id="recentSection">
     <h2>Recently played</h2>
-    <p class="sub">The last 100 songs, newest first. Click any cover for the full song page.</p>
+    <p class="sub">The last 100 songs, newest first, with how often the station has
+       come back to each one lately. Click any cover for the full song page.</p>
     <div class="strip" id="recentStrip"></div>
   </section>
 
@@ -79,8 +82,82 @@
     </div>
   </section>
 
+  <section id="rotationSection">
+    <h2>The playlist, reverse-engineered</h2>
+    <p class="sub">Nobody publishes what's in rotation, so this works it out from the log alone —
+       no show names, no schedule, just the clock and <span id="rotPlayCount"></span> plays.</p>
+
+    <div class="card">
+      <h3 class="cardtitle">What's in rotation right now</h3>
+      <p class="sub" id="rotationSub"></p>
+      <div id="tierRows"></div>
+      <p class="sub" id="rotationNote"></p>
+      <details class="meth">
+        <summary>How this is worked out</summary>
+        <div class="methbody" id="methRotation"></div>
+      </details>
+    </div>
+
+    <div class="cols2" style="margin-top:16px">
+      <div class="card">
+        <h3 class="cardtitle">Just added</h3>
+        <p class="sub" id="enteredSub"></p>
+        <div class="ranklist" id="enteredList"></div>
+      </div>
+      <div class="card">
+        <h3 class="cardtitle">Dropped from rotation</h3>
+        <p class="sub" id="droppedSub"></p>
+        <div class="droptable" id="droppedList"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3 class="cardtitle">The rotation changelog</h3>
+      <p class="sub" id="changelogSub"></p>
+      <div class="chart-wrap" id="changelogWrap"></div>
+      <div class="legend" id="changelogLegend"></div>
+      <details class="tablewrap"><summary>Week by week</summary><div id="changelogTable"></div></details>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3 class="cardtitle">How the playlist shifts</h3>
+      <p class="sub">Two ways of measuring how narrow the station gets. The
+         December spikes are the holiday-music takeover.</p>
+      <div class="chart-wrap" id="trendWrap"></div>
+      <div class="legend" id="trendLegend"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3 class="cardtitle">Day and night are not the same station
+        <span class="tzflag">Walmart Radio time (Central)</span></h3>
+      <p class="sub" id="dnSub"></p>
+      <div class="cols2">
+        <div>
+          <h4 class="minih">Plays mostly after dark</h4>
+          <div class="ranklist" id="nightList"></div>
+        </div>
+        <div>
+          <h4 class="minih">Plays mostly in daylight</h4>
+          <div class="ranklist" id="dayList2"></div>
+        </div>
+      </div>
+      <p class="sub" id="dnFoot"></p>
+      <details class="meth">
+        <summary>How this is worked out</summary>
+        <div class="methbody" id="methDayNight"></div>
+      </details>
+    </div>
+  </section>
+
+  <section id="recordsSection">
+    <h2>Records &amp; oddities</h2>
+    <p class="sub">The extremes a two-year log turns up. Every one of these is
+       recomputed from scratch on each refresh, so they do change.</p>
+    <div class="records" id="recordsList"></div>
+  </section>
+
   <section id="wrappedSection">
-    <h2>Your personal Walmart wrapped</h2>
+    <h2>Your Walmart Radio</h2>
     <p class="sub">Pick the hours you're in the store — working or wandering — and see what
        the radio played at you. Times are your local time. Overnight shifts work too:
        pick something like 10:00p to 6:30a, and choose the days your shift <em>starts</em>.</p>
@@ -101,80 +178,83 @@
           </select>
         </div>
       </div>
+      <h3 class="cardtitle wraptitle">Your Walmart wrapped</h3>
       <div class="wrapped-summary" id="wrapSummary"></div>
+      <p class="sub" id="wrapLede"></p>
       <div class="cols2">
         <div><h3 class="cardtitle">Your top songs</h3><div class="ranklist" id="wrapSongs"></div></div>
         <div><h3 class="cardtitle">Your top artists</h3><div class="ranklist" id="wrapArtists"></div></div>
       </div>
+      <h3 class="cardtitle" style="margin-top:18px">Songs your shift hears more than everyone else</h3>
+      <p class="sub" id="wrapSkewSub"></p>
+      <div class="ranklist" id="wrapSkew"></div>
     </div>
   </section>
 
   <section id="daySection">
     <h2>One day, in order</h2>
-    <p class="sub">Pick a date to replay it, first song to last. Your local time.</p>
+    <p class="sub">Pick a date to replay it, first song to last. Your local time.
+       Repeats and unusually quick returns are flagged as you scroll.</p>
     <div class="card">
-      <div class="filters"><label for="dayPick" class="flabel">Date</label>
-        <input type="date" id="dayPick"></div>
+      <div class="filters daynav">
+        <label for="dayPick" class="flabel">Date</label>
+        <input type="date" id="dayPick">
+        <button class="chip" id="dayPrev" aria-label="Previous day">← Prev</button>
+        <button class="chip" id="dayNext" aria-label="Next day">Next →</button>
+        <button class="chip" id="dayRandom">Random day</button>
+      </div>
+      <div class="daysummary" id="daySummary"></div>
       <div id="dayList"></div>
-    </div>
-  </section>
-
-  <section id="rotationSection">
-    <h2>The playlist, reverse-engineered</h2>
-    <p class="sub">Nobody publishes what's in rotation, so this works it out from the log alone —
-       no show names, no schedule, just the clock and 224,000 plays.</p>
-
-    <div class="card">
-      <h3 class="cardtitle">What's in rotation right now</h3>
-      <p class="sub" id="rotationSub"></p>
-      <div id="tierRows"></div>
-      <p class="sub" id="rotationNote"></p>
-    </div>
-
-    <div class="cols2" style="margin-top:16px">
-      <div class="card">
-        <h3 class="cardtitle">Just added</h3>
-        <p class="sub" id="enteredSub"></p>
-        <div class="ranklist" id="enteredList"></div>
-      </div>
-      <div class="card">
-        <h3 class="cardtitle">How the playlist shifts</h3>
-        <p class="sub">Two ways of measuring how narrow the station gets. The
-           December spikes are the holiday-music takeover.</p>
-        <div class="chart-wrap" id="trendWrap"></div>
-        <div class="legend" id="trendLegend"></div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <h3 class="cardtitle">Day and night are not the same station</h3>
-      <p class="sub" id="dnSub"></p>
-      <div class="cols2">
-        <div>
-          <h4 class="minih">Plays mostly after dark</h4>
-          <div class="ranklist" id="nightList"></div>
-        </div>
-        <div>
-          <h4 class="minih">Plays mostly in daylight</h4>
-          <div class="ranklist" id="dayList2"></div>
-        </div>
-      </div>
-      <p class="sub" id="dnFoot"></p>
     </div>
   </section>
 
   <section id="browseSection">
     <h2>Browse everything</h2>
-    <p class="sub">All <span id="browseCount"></span> of it. Search a song, an artist, a
-       half-remembered lyric fragment that happens to be in a title.</p>
+    <p class="sub">All <span id="browseCount"></span> of it. Search, filter by rotation
+       status, sort by any column — enough to answer questions the charts don't.</p>
     <div class="card">
       <div class="filters">
         <input type="search" id="browseQ" placeholder="Search songs and artists…" autocomplete="off">
         <button class="chip" data-mode="songs" aria-pressed="true">Songs</button>
         <button class="chip" data-mode="artists">Artists</button>
       </div>
-      <div class="ranklist" id="browseList"></div>
+      <div class="filters" id="statusFilters" role="group" aria-label="Rotation status">
+        <span class="flabel">Status</span>
+      </div>
+      <div class="explorer" id="browseTable"></div>
       <button class="morebtn" id="browseMore">Show more</button>
+    </div>
+  </section>
+
+  <section id="dataSection">
+    <h2>Use the data</h2>
+    <p class="sub">The whole log is downloadable. It is the same file the charts on this
+       page are built from — no sampling, no aggregation.</p>
+    <div class="cols2">
+      <div class="card">
+        <h3 class="cardtitle">Download</h3>
+        <div class="dl" id="downloads"></div>
+        <h4 class="minih">Columns</h4>
+        <table class="tbl dict">
+          <tr><th>played_at_utc</th><td>Timestamp the track change was observed, UTC,
+              second precision. Naive — no offset suffix.</td></tr>
+          <tr><th>artist</th><td>Artist string exactly as the stream reported it.
+              Not normalised or deduplicated against MusicBrainz.</td></tr>
+          <tr><th>song</th><td>Title as reported, including any
+              “(Feat. …)” or remix credit.</td></tr>
+        </table>
+        <p class="sub">One row per play. Song identity is the
+           <code>(artist, song)</code> pair. Licensed as a plain factual record —
+           use it for whatever you like; a link back is appreciated.</p>
+      </div>
+      <div class="card">
+        <h3 class="cardtitle">Data coverage</h3>
+        <p class="sub">What the file does and doesn't contain, so you can judge it
+           before you build on it.</p>
+        <div class="statrow flat" id="coverageStats"></div>
+        <div class="methbody" id="coverageNote"></div>
+        <details class="tablewrap"><summary>Every logger outage</summary><div id="outageTable"></div></details>
+      </div>
     </div>
   </section>
 
@@ -187,7 +267,8 @@
      <code>played_at_utc, artist, song</code> — as
      <a href="data/plays.csv" download>CSV</a> or
      <a href="data/plays.parquet" download>Parquet</a>. Refreshed daily
-     with the rest of the site; timestamps are UTC.</p>
+     with the rest of the site; timestamps are UTC.
+     <a href="#dataSection">More about the dataset →</a></p>
   <p id="footGaps"></p>
   <p>Artwork via <a href="https://coverartarchive.org">Cover Art Archive</a> /
      <a href="https://musicbrainz.org">MusicBrainz</a> and album art from the stream's metadata.

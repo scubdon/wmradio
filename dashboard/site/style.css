@@ -96,11 +96,46 @@ input[type="search"] {
   padding: 18px;
 }
 
-/* ---- KPI row ---- */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.tile .label { color: var(--ink-2); font-size: 13px; }
-.tile .value { font-size: 30px; font-weight: 600; margin-top: 2px; }
-.tile .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+/* ---- headline stat line + findings strip ---- */
+header.site .statline {
+  color: var(--ink); font-size: 14px; margin-top: 12px;
+  font-variant-numeric: tabular-nums;
+}
+#findingsSection { margin-top: 30px; }
+.findings-h {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 10px;
+}
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); gap: 1px;
+  background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.finding {
+  background: var(--surface-1); padding: 14px 16px; text-decoration: none; color: inherit;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.finding:hover { background: var(--series-1-wash); }
+.finding .fv { font-size: 25px; font-weight: 650; letter-spacing: -0.02em; color: var(--accent-ink); }
+.finding .fl { font-size: 12.5px; color: var(--ink-2); line-height: 1.35; }
+
+/* ---- methodology disclosure ---- */
+details.meth { margin-top: 16px; border-top: 1px solid var(--grid); padding-top: 10px; }
+details.meth > summary {
+  color: var(--accent-ink); font-size: 12.5px; cursor: pointer; list-style: none;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+details.meth > summary::-webkit-details-marker { display: none; }
+details.meth > summary::before {
+  content: "i"; width: 15px; height: 15px; border-radius: 50%; flex: none;
+  border: 1px solid currentColor; font-size: 10px; font-weight: 700; font-style: italic;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+details.meth > summary:hover { text-decoration: underline; }
+.methbody { max-width: 74ch; }
+.methbody .methq { font-size: 12.5px; font-weight: 650; margin: 12px 0 2px; color: var(--ink-2); }
+.methbody .metha { font-size: 12.5px; color: var(--muted); margin: 0; line-height: 1.5; }
+.tzflag {
+  font-weight: 400; font-size: 12px; color: var(--muted); margin-left: 8px;
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+}
 
 /* ---- filter row ---- */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; }
@@ -123,6 +158,9 @@ input[type="search"] {
 
 /* ---- top lists ---- */
 .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+/* Grid items default to min-width:auto, so one wide table inside a column
+   stretches the whole track — and, on a phone, the page with it. */
+.cols2 > * { min-width: 0; }
 @media (max-width: 760px) { .cols2 { grid-template-columns: 1fr; } }
 .ranklist { display: flex; flex-direction: column; gap: 2px; }
 .rankrow {
@@ -162,6 +200,7 @@ input[type="search"] {
 .play-tile .t1 { font-size: 12.5px; font-weight: 600; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .play-tile .t2 { font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .play-tile .t3 { font-size: 11.5px; color: var(--muted); }
+.play-tile .t4 { font-size: 11.5px; color: var(--accent-ink); font-variant-numeric: tabular-nums; }
 
 /* ---- charts ---- */
 .chart-svg { display: block; width: 100%; height: auto; }
@@ -246,8 +285,88 @@ details.tier > summary:hover { color: var(--accent-ink); }
   .tier .tblurb { display: none; }
 }
 
+/* ---- dropped-from-rotation + explorer tables ---- */
+table.tbl td.num, table.tbl th.num { text-align: right; }
+tr.clickrow { cursor: pointer; }
+tr.clickrow:hover td { background: var(--series-1-wash); }
+.droptable .dt1 { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.droptable .dt2 { color: var(--ink-2); font-size: 12px; }
+/* Both tables keep their columns on one line, so each scrolls inside itself
+   rather than pushing the page sideways on a phone. */
+.droptable { overflow-x: auto; }
+.droptable table.tbl { max-width: none; font-size: 12.5px; }
+.droptable th, .droptable td:not(:first-child) { white-space: nowrap; }
+.droptable td:first-child { width: 99%; }
+.droptable .dt1, .droptable .dt2 { max-width: 190px; }
+
+.explorer { overflow-x: auto; }
+table.tbl.exp { max-width: none; font-size: 13px; }
+table.tbl.exp th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+table.tbl.exp th.sortable:hover { color: var(--ink); }
+table.tbl.exp th.sorted { color: var(--accent-ink); }
+table.tbl.exp td { white-space: nowrap; }
+table.tbl.exp td.namecell { display: flex; align-items: center; gap: 8px; max-width: 280px; }
+table.tbl.exp td.namecell span { overflow: hidden; text-overflow: ellipsis; }
+.cover.sm { width: 24px; height: 24px; border-radius: 4px; flex: none; font-size: 11px; }
+.badge {
+  display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11.5px;
+  font-weight: 600; border: 1px solid currentColor; white-space: nowrap;
+}
+.badge.s-in { color: var(--accent-ink); }
+.badge.s-fading { color: var(--series-2); }
+.badge.s-recurrent { color: var(--ink-2); }
+.badge.s-dormant { color: var(--muted); }
+
+/* ---- records ---- */
+.records { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; }
+.record {
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  display: flex; flex-direction: column; gap: 3px;
+}
+div.record { cursor: default; }
+.record:hover { border-color: var(--accent-ink); }
+.record .rlabel { color: var(--muted); font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; }
+.record .rvalue { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
+.record .rsub { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+
+/* ---- day view extras ---- */
+.daynav .chip:disabled { opacity: 0.4; cursor: default; }
+.daysummary .sub { color: var(--ink-2); font-size: 13px; margin: 0 0 10px; }
+.dayrow .flag {
+  font-size: 11.5px; color: var(--accent-ink); border: 1px solid var(--border);
+  border-radius: 999px; padding: 0 7px; margin-left: 8px; white-space: nowrap;
+}
+.dayrow .flag.hot { color: var(--series-2); border-color: currentColor; }
+.dayrow .flag.dim { color: var(--muted); }
+.daygap {
+  color: var(--muted); font-size: 12px; text-align: center; padding: 7px 0; margin: 3px 0;
+  border-top: 1px dashed var(--baseline); border-bottom: 1px dashed var(--baseline);
+}
+
+/* ---- use the data ---- */
+.dl { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.dlrow {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; text-decoration: none;
+  color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+}
+.dlrow:hover { background: var(--series-1-wash); border-color: var(--accent-ink); }
+.dlrow .dlname { font-weight: 650; font-size: 14px; color: var(--accent-ink); }
+.dlrow .dlmeta { font-size: 12.5px; color: var(--ink-2); text-align: right;
+  font-variant-numeric: tabular-nums; }
+.dlrow .dlnote { grid-column: 1 / 3; font-size: 12px; color: var(--muted); }
+table.tbl.dict th { width: 132px; vertical-align: top; font-family: ui-monospace, monospace;
+  font-size: 12px; color: var(--ink-2); font-weight: 500; }
+table.tbl.dict td { color: var(--muted); font-size: 12.5px; }
+.statrow.flat { background: none; border: 0; padding: 0; }
+
 /* ---- detail pages ---- */
 .page { padding-top: 34px; }
+.badgeline { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; flex-wrap: wrap; }
+.badgeline .badgenote { color: var(--muted); font-size: 12.5px; }
+.card.windows .statrow { margin-bottom: 8px; }
+.card.windows .sub { color: var(--ink-2); margin: 0; }
+.wraptitle { margin-top: 18px; }
 .backlink { color: var(--accent-ink); font-size: 13px; text-decoration: none; }
 .backlink:hover { text-decoration: underline; }
 .pagehead { display: flex; gap: 20px; align-items: center; margin: 16px 0 22px; }
