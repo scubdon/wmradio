@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "0 10 * * *"   # 10:00 UTC ≈ 6am ET, after the overnight blocks
   workflow_dispatch:
+  push:
+    branches: [main]
+    # This job commits new artwork thumbs back to main. Pushes made with the
+    # default GITHUB_TOKEN don't trigger workflows, so that can't loop today —
+    # but ignoring the path it writes keeps that true even if the token is ever
+    # swapped for a PAT. Data lives in GCS, so a thumbs-only commit has nothing
+    # new to publish anyway.
+    paths-ignore:
+      - "artwork/artwork_small/**"
 
 permissions:
   contents: write
