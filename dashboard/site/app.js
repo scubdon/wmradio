@@ -30,6 +30,18 @@ const dtFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit" });
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+// A day key is the epoch-day number of a *local* calendar date. Reading one
+// back with local getters slips a day wherever the UTC offset is negative
+// (a Jan 14 key renders as Jan 13 in New York), so day keys are always read
+// in UTC — both for formatting and for day-of-week arithmetic.
+const dateFromKey = k => new Date(k * DAY_MS);
+const keyDateFmt = new Intl.DateTimeFormat(undefined,
+  { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const keyDayFmt = new Intl.DateTimeFormat(undefined,
+  { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const keyMonthFmt = new Intl.DateTimeFormat(undefined,
+  { month: "short", year: "2-digit", timeZone: "UTC" });
+
 // ---------- boot ----------
 (async function boot() {
   const [meta, songs, plays] = await Promise.all(
@@ -293,10 +305,10 @@ function renderDaily() {
   }
   let lastMonth = -1;
   days.forEach((d, i) => {
-    const dt = new Date(d * DAY_MS);
-    if (dt.getDate() <= 3 && dt.getMonth() !== lastMonth && dt.getMonth() % 3 === 0) {
-      lastMonth = dt.getMonth();
-      svg.append(svgText(x(i), H - 8, monthFmt.format(dt), "middle"));
+    const dt = dateFromKey(d);
+    if (dt.getUTCDate() <= 3 && dt.getUTCMonth() !== lastMonth && dt.getUTCMonth() % 3 === 0) {
+      lastMonth = dt.getUTCMonth();
+      svg.append(svgText(x(i), H - 8, keyMonthFmt.format(dt), "middle"));
     }
   });
 
@@ -324,7 +336,7 @@ function renderDaily() {
     cross.setAttribute("visibility", "visible");
     dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(vals[i]));
     dot.setAttribute("visibility", "visible");
-    showTip(wrap, ev, `${fmtInt(vals[i])} plays`, dateFmt.format(new Date(days[i] * DAY_MS)));
+    showTip(wrap, ev, `${fmtInt(vals[i])} plays`, keyDateFmt.format(dateFromKey(days[i])));
   });
   svg.addEventListener("pointerleave", () => {
     cross.setAttribute("visibility", "hidden");
@@ -335,8 +347,8 @@ function renderDaily() {
   // monthly table twin
   const byMonth = new Map();
   days.forEach((d, i) => {
-    const dt = new Date(d * DAY_MS);
-    const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+    const dt = dateFromKey(d);
+    const k = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
     byMonth.set(k, (byMonth.get(k) || 0) + vals[i]);
   });
   const tbl = el("table", "tbl");
@@ -716,6 +728,9 @@ function songPage(sid) {
     [`${hourLabel(peakHour)}–${hourLabel((peakHour + 1) % 24)}`, "favourite hour"],
   ]));
 
+  page.append(calendarCard(sc.times, "Every day it played",
+    "One square per day since logging began. Solid runs are spells in rotation; " +
+    "blank runs are the song sitting out."));
   page.append(chartCard("Plays per month", monthChart(sc.byMonth),
     "Every month since logging began. Flat stretches are gaps in the log, not the station."));
   page.append(twoUp(
@@ -782,6 +797,9 @@ function artistPage(name) {
   card.append(list);
   page.append(card);
 
+  page.append(calendarCard(sc.times, "Every day they played",
+    `One square per day since logging began, counting all ${fmtInt(ids.length)} ` +
+    `song${ids.length > 1 ? "s" : ""}.`));
   page.append(chartCard("Plays per month", monthChart(sc.byMonth),
     `Every ${name} play, by month.`));
   page.append(twoUp(
@@ -810,6 +828,85 @@ function recentPlaysCard(times, title) {
     list.append(row);
   }
   card.append(list);
+  return card;
+}
+// GitHub-style calendar: one cell per day, weeks as columns, Monday on top.
+// A song averages barely more than one play on the days it appears at all, so
+// what this really shows is *presence* — the stretches where a track was in
+// rotation, and the dormant runs between them.
+let OUTAGE_DAYS = null;
+function outageDays() {
+  if (!OUTAGE_DAYS) {
+    OUTAGE_DAYS = new Set();
+    for (const [a, b] of META.gaps)
+      for (let k = dayKeyOf(a); k <= dayKeyOf(b); k++) OUTAGE_DAYS.add(k);
+  }
+  return OUTAGE_DAYS;
+}
+function calendarCard(times, title, note) {
+  const byDay = new Map();
+  for (const i of times) byDay.set(LDAY[i], (byDay.get(LDAY[i]) || 0) + 1);
+  const d0 = LDAY[0], d1 = LDAY[N - 1];
+  const lead = (dateFromKey(d0).getUTCDay() + 6) % 7;   // Monday = 0
+  const start = d0 - lead;
+  const weeks = Math.ceil((d1 - start + 1) / 7);
+
+  const cell = 10, step = 11.6, left = 30, top = 18;
+  const W = left + weeks * step, H = top + 7 * step;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg cal",
+    role: "img", "aria-label": `${title}: one cell per day` });
+
+  const out = outageDays();
+  const ramp = rampColors();
+  const levels = [ramp[2], ramp[4], ramp[6]];          // 1 play, 2, 3+
+  let lastLabel = -99, maxDay = 0;
+
+  for (let w = 0; w < weeks; w++) {
+    for (let r = 0; r < 7; r++) {
+      const key = start + w * 7 + r;
+      if (key < d0 || key > d1) continue;
+      const n = byDay.get(key) || 0;
+      maxDay = Math.max(maxDay, n);
+      const down = out.has(key);
+      const rect = svgEl("rect", {
+        x: left + w * step, y: top + r * step, width: cell, height: cell, rx: 2,
+        fill: n ? levels[Math.min(2, n - 1)] : down ? "var(--cal-out)" : "var(--cal-empty)",
+      });
+      rect.dataset.tip = JSON.stringify({
+        v: n ? `${n} play${n === 1 ? "" : "s"}` : down ? "logger down" : "not played",
+        l: keyDayFmt.format(dateFromKey(key)),
+      });
+      svg.append(rect);
+    }
+    const first = dateFromKey(start + w * 7);
+    if (first.getUTCDate() <= 7 && first.getUTCMonth() % 2 === 0 && w - lastLabel >= 6) {
+      lastLabel = w;
+      svg.append(svgText(left + w * step, 11, keyMonthFmt.format(first), "start"));
+    }
+  }
+  for (const r of [0, 2, 4])
+    svg.append(svgText(left - 5, top + r * step + cell - 1, DOW_LABELS[r], "end"));
+
+  const card = el("div", "card");
+  card.append(el("h3", "cardtitle", title));
+  if (note) card.append(el("p", "sub", note));
+  const wrap = el("div", "chart-wrap");
+  wrap.append(svg);
+  card.append(wrap);
+  attachCellTips(svg, wrap);
+
+  const legend = el("div", "heat-scale cal-legend");
+  legend.append(el("span", null, "fewer"));
+  const sw = el("div", "swatches");
+  for (const c of ["var(--cal-empty)", ...levels.slice(0, Math.max(1, maxDay))]) {
+    const i = el("i"); i.style.background = c; sw.append(i);
+  }
+  legend.append(sw, el("span", null, "more plays that day"));
+  const outMark = el("span", "outkey");
+  const oi = el("i"); oi.style.background = "var(--cal-out)";
+  outMark.append(oi, document.createTextNode("logger down"));
+  legend.append(outMark);
+  card.append(legend);
   return card;
 }
 function chartCard(title, svg, note) {
