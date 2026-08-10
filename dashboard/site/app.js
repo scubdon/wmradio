@@ -92,6 +92,7 @@ const keyMonthFmt = new Intl.DateTimeFormat(undefined,
   initWrapped();
   initDayView();
   renderRotation();
+  renderSilence();
   renderRecords();
   initBrowse();
   renderDataSection();
@@ -201,6 +202,12 @@ function renderFindings() {
     [pct(locked), "of songs are day-only or night-only", "#dnSub"],
     [pct(lastMonth[3]), "of airtime came from 50 songs last month", "#trendWrap"],
   ];
+  const sil = META.silence;
+  if (sil && sil.before) {
+    items.push([`${sil.before.silent_hours_per_day}h`,
+      "a day the stream went quiet — on a schedule you can read off the log",
+      "#silenceWrap"]);
+  }
   const wrap = $("#findings");
   wrap.replaceChildren();
   for (const [value, label, href] of items) {
@@ -358,6 +365,8 @@ function renderHeatmap(start) {
   $("#heatTable").replaceChildren(tbl);
 }
 const hourLabel = h => h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`;
+const andList = xs => xs.length < 2 ? xs.join("")
+  : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 
 // ---------- daily chart ----------
 function renderDaily() {
@@ -570,6 +579,42 @@ const DAY_QUIET_MIN = 45 * 60000;
 // "Didn't that just play?" — the threshold below which a repeat is surprising.
 const QUICK_RETURN_MS = 4 * 3600000;
 
+// Reading a day in order is where the programme grid becomes obvious, so name
+// the blocks in place rather than leaving the reader with an unexplained hole.
+const ctParts = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", hourCycle: "h23" });
+function scheduledBreak(from, to) {
+  const s = META.silence;
+  if (!s || !s.blocks.length) return null;
+  const at = ms => {
+    const p = ctParts.formatToParts(new Date(ms));
+    const g = t => p.find(x => x.type === t).value;
+    return { day: `${g("year")}-${g("month")}-${g("day")}`, hour: +g("hour") };
+  };
+  // The gap opens with the last song logged before the break and closes with
+  // the first one after, both a few minutes outside it, so the hours that are
+  // actually empty are the ones half an hour inside each end.
+  const a = at(from + 1800000), b = at(to - 1800000);
+  if (s.changeover && a.day >= s.changeover) return null;
+  const dow = (new Date(a.day + "T12:00:00").getDay() + 6) % 7;
+  const hit = s.blocks.filter(x =>
+    x.to > a.hour && x.from <= b.hour &&
+    !(x.days === "weekdays" && dow > 4) && !(x.days === "weekends" && dow < 5));
+  if (!hit.length) return null;
+  // Adjacent blocks are listed separately when they differ by weekday (the
+  // 6a hour runs every day, the 7a hour only Mon–Fri); on a day both apply,
+  // what the listener met was one two-hour break. Non-adjacent ones mean the
+  // silence swallowed a block and kept going, which is not a break.
+  hit.sort((x, y) => x.from - y.from);
+  if (hit.some((x, i) => i && x.from !== hit[i - 1].to)) return null;
+  const lo = hit[0].from, hi = hit[hit.length - 1].to;
+  // And it has to be about the right length. An outage that happens to start
+  // inside a scheduled hour is still an outage.
+  if (to - from > (hi - lo + 0.3) * 3600000) return null;
+  return `${hourLabel(lo)}–${hourLabel(hi % 24)} Central`;
+}
+
 function initDayView() {
   const pick = $("#dayPick");
   pick.value = isoLocal(new Date(T[N - 1]));
@@ -630,10 +675,12 @@ function renderDayView() {
     const sid = SID[i], [artist, song, art] = SONGS[sid];
 
     if (pos) {
-      const gap = T[i] - T[idx[pos - 1]];
+      const prev = T[idx[pos - 1]], gap = T[i] - prev;
       if (gap >= DAY_QUIET_MIN) {
         quiet++;
-        list.append(el("div", "daygap", `${fmtDur(gap)} with nothing logged`));
+        const sched = scheduledBreak(prev, T[i]);
+        list.append(el("div", "daygap", `${fmtDur(gap)} with nothing logged`
+          + (sched ? ` — the scheduled ${sched} break` : "")));
       }
     }
 
@@ -776,6 +823,127 @@ function renderRotation() {
      `Not the individual songs — the spread. If one playlist ran around the clock, the ` +
      `z-scores would have a standard deviation near 1. It is ${dn.z_sd}. Something is ` +
      `partitioning the catalogue by time of day.`],
+  ]);
+}
+
+// ---------- the programme grid, read off the silences ----------
+// The stream reports a track change and nothing else. So an hour that logged
+// nothing is an hour it was not playing songs — and those hours land on the
+// same Central-time slots every day, which is a schedule. It is the only view
+// of the schedule this dataset contains, and it is drawn entirely from what is
+// missing.
+function renderSilence() {
+  const s = META.silence;
+  if (!s || !s.before) return;
+  $("#silenceCard").hidden = false;
+
+  const b = s.before, a = s.after;
+  // Grouped by which days they apply to, because "6a–7a, 7a–8a weekdays" is a
+  // list of rows, not a description of a schedule.
+  const byDays = new Map();
+  for (const x of s.blocks) {
+    const label = x.to - x.from === 1
+      ? hourLabel(x.from) : `${hourLabel(x.from)}–${hourLabel(x.to % 24)}`;
+    byDays.set(x.days, (byDays.get(x.days) || []).concat(label));
+  }
+  const blockText = [...byDays].map(([days, hrs]) =>
+    `the ${andList(hrs)} hour${hrs.length > 1 ? "s" : ""} ` +
+    `${days === "every day" ? days : "on " + days}`).join(", plus ");
+  $("#silenceSub").textContent =
+    `For ${fmtInt(b.days)} days the stream logged nothing at all for about ` +
+    `${b.silent_hours_per_day} hours out of every 24 — and always the same hours: ` +
+    `${blockText}. None of that is our doing. The grid below is simply what is ` +
+    `left when you plot the holes.`;
+
+  const cw = 30, ch = 22, left = 34, top = 18, gap = 40;
+  const rows = a ? 8 : 7;
+  const W = left + 24 * cw + 6;
+  const H = top + 7 * ch + (a ? gap + ch : 0) + 8;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "Hours of the day with nothing logged, by weekday, on Central time" });
+  for (let h = 0; h < 24; h += 3)
+    svg.append(svgText(left + h * cw + cw / 2, 12, hourLabel(h), "middle"));
+
+  // Silence is drawn as ink over an empty-day base, so "loud" reads as blank
+  // and the schedule reads as the marks — the opposite of the play heatmap,
+  // which is the point.
+  const cell = (x, y, share, tip) => {
+    svg.append(svgEl("rect", { x: x + 1, y: y + 1, width: cw - 2, height: ch - 2,
+      rx: 3, fill: "var(--cal-empty)" }));
+    const r = svgEl("rect", { x: x + 1, y: y + 1, width: cw - 2, height: ch - 2,
+      rx: 3, fill: "var(--series-2)", opacity: share.toFixed(3) });
+    r.dataset.tip = JSON.stringify(tip);
+    svg.append(r);
+  };
+
+  for (let d = 0; d < 7; d++) {
+    const y = top + d * ch;
+    svg.append(svgText(left - 6, y + ch / 2 + 4, DOW_LABELS[d], "end"));
+    for (let h = 0; h < 24; h++) {
+      const share = b.grid[d][h] || 0, plays = b.plays[d][h];
+      cell(left + h * cw, y, share, {
+        v: `${pct(share)} of them silent`,
+        l: `${DOW_LABELS[d]} ${hourLabel(h)}–${hourLabel((h + 1) % 24)} Central · ` +
+           `${plays} plays an hour on average, over ${fmtInt(b.days)} days` });
+    }
+  }
+
+  if (a) {
+    const y = top + 7 * ch + gap;
+    svg.append(svgText(left - 6, y + ch / 2 + 4, "Now", "end"));
+    svg.append(svgText(left, y - 10, `Since ${a.from} — every day, all seven`, "start"));
+    for (let h = 0; h < 24; h++) {
+      let sil = 0, plays = 0;
+      for (let d = 0; d < 7; d++) { sil += a.grid[d][h] || 0; plays += a.plays[d][h] || 0; }
+      cell(left + h * cw, y, sil / 7, {
+        v: `${pct(sil / 7)} of them silent`,
+        l: `${hourLabel(h)}–${hourLabel((h + 1) % 24)} Central · ${(plays / 7).toFixed(1)} plays ` +
+           `an hour on average, over ${fmtInt(a.days)} days since ${a.from}` });
+    }
+  }
+
+  $("#silenceWrap").replaceChildren(svg);
+  attachCellTips(svg, $("#silenceWrap"));
+
+  const scale = $("#silenceScale");
+  scale.replaceChildren(el("span", null, "music every day"));
+  const sw = el("div", "swatches");
+  [0, 0.25, 0.5, 0.75, 1].forEach(o => {
+    const i = el("i");
+    i.style.background = "var(--series-2)";
+    i.style.opacity = o;
+    sw.append(i);
+  });
+  scale.append(sw, el("span", null, "nothing logged, ever"));
+
+  $("#silenceFoot").textContent = a
+    ? `The grid stopped on ${s.changeover}. Since then the stream has run songs through ` +
+      `all 24 hours, seven days a week — ${fmtInt(a.plays_per_day)} plays a day against ` +
+      `${fmtInt(b.plays_per_day)} before, which is most of a working day's worth of music ` +
+      `added to the schedule.`
+    : `The grid is still in force.`;
+
+  methodology($("#methSilence"), [
+    ["What an empty hour actually means",
+     `The logger records a track change. It cannot see talk, adverts, station idents or ` +
+     `dead air — during any of those the stream simply stops announcing anything new, and ` +
+     `an hour goes by with no rows. So these cells mean "no song started", not "no sound".`],
+    ["Why this is programming and not a broken logger",
+     `Failure does not keep office hours. These blocks open on the hour, close on the hour, ` +
+     `hold the same Central-time slots across every daylight-saving change in the log, and ` +
+     `treat weekends differently from weekdays — the ${hourLabel(7)} hour is weekdays only. ` +
+     `The ${fmtInt(META.coverage.n_outages)} real outages look nothing like it: they fall at ` +
+     `no particular time of day, and most of them last more than a day.`],
+    ["Which days count",
+     `Days the logger missed any part of are dropped, along with the first and last day of ` +
+     `the log, which are both cut short. That leaves ${fmtInt(b.days)} clean days before the ` +
+     `change and ${a ? fmtInt(a.days) : 0} after.`],
+    ["What it can't tell you",
+     `Not what fills the blocks. A two-hour weekday morning hole is the right shape for a ` +
+     `hosted segment — interviews, adverts, corporate messaging — but the metadata feed ` +
+     `never says so, and nothing in this dataset can confirm it. Nor can it see anything ` +
+     `done at store level: if individual stores turn their speakers down, one shared stream ` +
+     `looks identical either way.`],
   ]);
 }
 
@@ -1153,23 +1321,31 @@ function renderDataSection() {
     stats.append(d);
   }
 
-  // The honest version of the coverage number. Most of the missing time is not
-  // the logger failing, and saying otherwise would misdescribe the dataset.
+  // The honest version of the coverage number. Most of the missing time is the
+  // station's own schedule, not the logger failing, and saying otherwise would
+  // misdescribe the dataset.
+  const sil = META.silence;
   methodology($("#coverageNote"), [
     ["How coverage is measured",
      `The share of clock hours between the first and last play that contain at least one ` +
      `logged track change. ${fmtInt(c.covered_hours)} of ${fmtInt(c.span_hours)} hours qualify.`],
     ["Where the rest of the time went",
-     `${fmtInt(c.n_outages)} genuine outages account for ${fmtInt(c.outage_hours)} hours, the ` +
-     `longest running ${fmtInt(c.longest_outage_hours)} hours. Most of the remainder is ` +
-     `${fmtInt(c.n_quiet)} shorter silences totalling about ${fmtInt(c.quiet_hours)} hours, and ` +
-     `those are not obviously the logger's fault — they cluster on a three-hour cycle on the ` +
-     `station's own clock, which looks like programming rather than failure. They are counted ` +
-     `separately here rather than folded into a downtime figure.`],
+     `Mostly nowhere — the station was not playing songs. There are ${fmtInt(c.n_quiet)} short ` +
+     `silences totalling about ${fmtInt(c.quiet_hours)} hours, and most of them land in the ` +
+     `same Central-time slots every day: the programme grid` +
+     (sil && sil.changeover ? `, which ran until ${sil.changeover}` : "") + `. ` +
+     `Real downtime is the other kind, and it does not look like that: ${fmtInt(c.n_outages)} ` +
+     `outages totalling ${fmtInt(c.outage_hours)} hours, the longest ` +
+     `${fmtInt(c.longest_outage_hours)} hours, most of them running more than a full day. ` +
+     `The two are counted separately rather than bundled into one downtime figure.`],
     ["What that means for the file",
-     `Play counts are lower bounds, and gaps in a song's history may be ours rather than the ` +
-     `station's. Anything comparing two periods should check both against the outage list ` +
-     `below first.`],
+     `Play counts are lower bounds. A hole in a song's history is usually the station's ` +
+     `schedule, occasionally ours — check anything that compares two periods against the ` +
+     `outage list below` +
+     (sil && sil.changeover
+       ? `, and bear in mind the grid lifted on ${sil.changeover}, so hours that were dead ` +
+         `for the first two years are full of music now`
+       : "") + `.`],
   ]);
 
   const tbl = el("table", "tbl");
@@ -1188,8 +1364,13 @@ function renderDataSection() {
 // ---------- footer ----------
 function renderFooter() {
   const g = META.gaps.map(([a, b]) => a === b ? a : `${a} → ${b}`);
+  const s = META.silence;
   $("#footGaps").textContent =
     `Data completeness: ${g.length} recording gaps (logger downtime): ${g.join(" · ")}. ` +
+    (s && s.changeover
+      ? `Shorter silences are the station's own doing, not ours — until ${s.changeover} the ` +
+        `stream ran a fixed grid of quiet hours. `
+      : "") +
     `The weeks before Christmas skew heavily to holiday music.`;
 }
 

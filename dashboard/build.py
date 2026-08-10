@@ -47,15 +47,21 @@ ROTATION_MIN_PLAYS = 3
 CHANGELOG_WEEKS = 26
 
 # What counts as the logger being down, as opposed to the stream simply not
-# reporting a track. Deliberately conservative: silences of an hour or two are
-# common and *structured* — they cluster on a 3-hour cycle on the station's own
-# clock (CT hours 2, 5, 11, 14, 17, 23), which is programming, not failure.
-# Only multi-hour holes get called downtime.
+# reporting a track. Deliberately conservative: hour-long silences are common
+# and *structured* — they land on the same Central-time hours every day, which
+# is a programme grid, not failure (see build_silence). Only multi-hour holes
+# get called downtime, and in practice every one of those runs half a day or
+# more.
 OUTAGE_MIN_MINUTES = 6 * 60
 
 # Silences long enough to be worth reporting, but short enough to be the
 # station rather than the logger.
 QUIET_MIN_MINUTES = 45
+
+# A day is "gridded" if this many Central-time hours logged nothing at all.
+# The scheduled blocks take out six or seven hours a day; a day running music
+# round the clock takes out none. Nothing sits in between, so the cut is safe.
+GRID_MIN_SILENT_HOURS = 4
 
 # "Seasonal" is derived, not keyword-matched: a song whose plays cluster in the
 # run-up to Christmas. Nov 15 – Dec 31 is the window the log's December spike
@@ -267,6 +273,129 @@ def build_coverage(plays_min, down, first_day, last_day, n_gap_days):
     }
 
 
+DOW_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def describe_days(dows):
+    if len(dows) == 7:
+        return "every day"
+    if dows == {0, 1, 2, 3, 4}:
+        return "weekdays"
+    if dows == {5, 6}:
+        return "weekends"
+    return ", ".join(DOW_NAMES[d] for d in sorted(dows))
+
+
+def build_silence(con, down):
+    """
+    The station's daily programme grid, read off the silences.
+
+    The stream announces a track change and nothing else — no talk, no ads, no
+    dead air. So an hour that logs nothing is an hour the stream was not
+    playing songs, and for most of this log those hours are *the same hours
+    every day* on Central time, the station's own clock. That is a schedule,
+    and it is the only view of one this dataset contains: the published
+    schedule can't be matched against the log (see the project notes), but the
+    holes can.
+
+    down: [(start_min, end_min)] UTC epoch-minute outage spans, so days the
+    logger slept are dropped rather than counted as the station going quiet.
+    """
+    rows = con.execute("""
+        WITH p AS (SELECT (ts_utc AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') ct
+                   FROM plays)
+        SELECT ct::DATE::VARCHAR AS d, hour(ct) AS h, count(*) AS n
+        FROM p GROUP BY 1, 2
+    """).fetchall()
+
+    by_day = {}
+    for d, h, n in rows:
+        by_day.setdefault(d, {})[h] = n
+
+    # A partial day is indistinguishable from a quiet one, so drop any date the
+    # logger was down for part of, plus the first and last (both truncated).
+    skip = set()
+    for a, b in down:
+        d = datetime.fromtimestamp(a * 60, timezone.utc).astimezone(CT).date()
+        end = datetime.fromtimestamp(b * 60, timezone.utc).astimezone(CT).date()
+        while d <= end:
+            skip.add(d.isoformat())
+            d += timedelta(days=1)
+    days = sorted(by_day)
+    skip.update(days[:1] + days[-1:])
+    days = [d for d in days if d not in skip]
+    if not days:
+        return None
+
+    silent = {d: {h for h in range(24) if h not in by_day[d]} for d in days}
+    gridded = {d for d in days if len(silent[d]) >= GRID_MIN_SILENT_HOURS}
+
+    # The changeover is the start of the run of gridless days that reaches the
+    # present. Isolated gridless days earlier on (the December holiday run,
+    # which suspends the grid on weekdays) stay in the "before" era, where they
+    # belong — they were exceptions to a schedule that was still in force.
+    i = len(days)
+    while i > 0 and days[i - 1] not in gridded:
+        i -= 1
+    changeover = days[i] if i < len(days) else None
+
+    def era(subset):
+        if not subset:
+            return None
+        n_days = [[0] * 24 for _ in range(7)]
+        n_silent = [[0] * 24 for _ in range(7)]
+        n_plays = [[0] * 24 for _ in range(7)]
+        plays = 0
+        for d in subset:
+            dow = date.fromisoformat(d).weekday()
+            plays += sum(by_day[d].values())
+            for h in range(24):
+                n_days[dow][h] += 1
+                n_plays[dow][h] += by_day[d].get(h, 0)
+                if h in silent[d]:
+                    n_silent[dow][h] += 1
+        grid = [[round(n_silent[w][h] / n_days[w][h], 3) if n_days[w][h] else None
+                 for h in range(24)] for w in range(7)]
+        return {
+            "days": len(subset),
+            "from": subset[0],
+            "to": subset[-1],
+            "grid": grid,
+            "plays": [[round(n_plays[w][h] / n_days[w][h], 1) if n_days[w][h] else None
+                       for h in range(24)] for w in range(7)],
+            "plays_per_day": round(plays / len(subset)),
+            "silent_hours_per_day": round(
+                sum(len(silent[d]) for d in subset) / len(subset), 1),
+        }
+
+    before = era(days[:i])
+    after = era(days[i:])
+
+    # Contiguous runs of hours that are silent on most days, grouped by which
+    # days they apply to — the schedule in words rather than in colour.
+    blocks = []
+    if before:
+        per_hour = [{w for w in range(7) if (before["grid"][w][h] or 0) >= 0.6}
+                    for h in range(24)]
+        h = 0
+        while h < 24:
+            if not per_hour[h]:
+                h += 1
+                continue
+            j = h
+            while j + 1 < 24 and per_hour[j + 1] == per_hour[h]:
+                j += 1
+            blocks.append({"from": h, "to": j + 1, "days": describe_days(per_hour[h])})
+            h = j + 1
+
+    return {
+        "changeover": changeover,
+        "blocks": blocks,
+        "before": before,
+        "after": after,
+    }
+
+
 def build_records(con, seq, songs, songs_index, pool_ids, down):
     """
     Records & oddities — the "how is that even possible" facts a 224k-play log
@@ -368,7 +497,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down):
             if ib - ia >= 2 and (best_short is None or gap < best_short[1]):
                 best_short = (sid, gap, b)
             if best_return is None or observed(a, b) > best_return[1]:
-                best_return = (sid, observed(a, b), b)
+                best_return = (sid, observed(a, b), b, gap)
 
         # Most plays inside any rolling 24 hours.
         lo = 0
@@ -409,11 +538,18 @@ def build_records(con, seq, songs, songs_index, pool_ids, down):
                        f"{songs[sid][1]} — {songs[sid][0]}, through {fmt_day(when)}",
                        sid=sid))
     if best_return:
-        sid, gap, when = best_return
+        sid, gap, when, raw = best_return
+        # The value is listening time, not calendar time: any logger downtime
+        # inside the stretch is deducted, because we cannot claim the station
+        # skipped a song during hours nobody was watching. Both numbers are
+        # stated so the deduction is visible rather than implied.
+        lost = round((raw - gap) / 1440)
         out.append(rec("return", "Longest disappearance before coming back",
                        f"{round(gap / 1440)} days",
-                       f"{songs[sid][1]} — {songs[sid][0]} resurfaced on {fmt_day(when)}, "
-                       f"with the logger up the whole time", sid=sid))
+                       f"{songs[sid][1]} — {songs[sid][0]} resurfaced on {fmt_day(when)}. "
+                       f"{round(raw / 1440):,} days passed in all; "
+                       + (f"{lost:,} of them fall inside logger outages and are not counted."
+                          if lost else "the logger was up for all of it."), sid=sid))
 
     # --- longest-serving track --------------------------------------------
     span_best = max(
@@ -433,6 +569,100 @@ def build_records(con, seq, songs, songs_index, pool_ids, down):
         out.append(rec("pool_artist", "Most songs in rotation right now", f"{k} songs",
                        f"{name} — of the {len(pool_ids):,} titles currently in rotation",
                        artist=name))
+
+    # --- longest stretch with nothing repeated ----------------------------
+    # Sliding window over the whole log: how long can you stand in the aisle
+    # before the station plays something you have already heard that shift?
+    last_at, start, best_run = {}, 0, (0, 0, 0)
+    for i, (m, sid) in enumerate(seq):
+        if last_at.get(sid, -1) >= start:
+            start = last_at[sid] + 1
+        last_at[sid] = i
+        if i - start + 1 > best_run[0]:
+            best_run = (i - start + 1, seq[start][0], m)
+    if best_run[0] > 1:
+        n, a, b = best_run
+        out.append(rec("norepeat", "Longest run with nothing repeated", f"{n} songs",
+                       f"{round((b - a) / 60)} hours straight without a single track "
+                       f"coming back, ending {fmt_day(b)}"))
+
+    # --- station-level extremes -------------------------------------------
+    d = con.execute("""
+        SELECT date_local::VARCHAR, count(*) n, count(DISTINCT song) k
+        FROM plays GROUP BY 1 ORDER BY n DESC LIMIT 1
+    """).fetchone()
+    out.append(rec("busiest", "Busiest day the station has had", f"{d[1]} plays",
+                   f"{d[0]} — {d[2]} different songs, one every "
+                   f"{round(1440 / d[1] * 10) / 10:g} minutes"))
+
+    # First heard *since* the opening weeks, which are all debuts by definition.
+    d = con.execute("""
+        WITH f AS (SELECT artist, song, min(date_local) d FROM plays GROUP BY 1, 2)
+        SELECT d::VARCHAR, count(*) k FROM f
+        WHERE d > (SELECT min(date_local) + 60 FROM plays)
+        GROUP BY 1 ORDER BY k DESC LIMIT 1
+    """).fetchone()
+    if d:
+        out.append(rec("intake", "Most new songs added in one day", f"{d[1]} songs",
+                       f"all heard for the first time on {d[0]}"))
+
+    # --- the long tail ----------------------------------------------------
+    once = con.execute("""
+        WITH s AS (SELECT artist, song, count(*) n, max(date_local) d FROM plays GROUP BY 1, 2)
+        SELECT count(*), any_value(artist ORDER BY d DESC), any_value(song ORDER BY d DESC),
+               any_value(d ORDER BY d DESC)::VARCHAR
+        FROM s WHERE n = 1
+    """).fetchone()
+    if once and once[0]:
+        out.append(rec("once", "Songs played exactly once, ever", f"{once[0]} songs",
+                       f"the most recent was {once[2]} — {once[1]}, on {once[3]}",
+                       sid=sid_of(once[1], once[2])))
+
+    # --- tied to a single hour of the day ---------------------------------
+    # The day/night split writ small: a song that keeps its appointment.
+    ck = con.execute("""
+        WITH p AS (
+            SELECT artist, song,
+                   hour(ts_utc AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') h
+            FROM plays),
+        t AS (SELECT artist, song, count(*) n FROM p GROUP BY 1, 2 HAVING count(*) >= 100),
+        x AS (SELECT p.artist, p.song, h, count(*) k FROM p JOIN t USING (artist, song)
+              GROUP BY 1, 2, 3)
+        SELECT x.artist, x.song, x.h, x.k, t.n
+        FROM x JOIN t USING (artist, song) ORDER BY x.k::DOUBLE / t.n DESC LIMIT 1
+    """).fetchone()
+    if ck:
+        artist, song, h, k, n = ck
+        out.append(rec("clockbound", "Most clock-bound song",
+                       f"{round(k / n * 100)}% in one hour",
+                       f"{song} — {artist}, {k} of its {n} plays between "
+                       f"{h}:00 and {h + 1}:00 Central", sid=sid_of(artist, song)))
+
+    # --- when the holiday takeover starts ---------------------------------
+    mo, day = SEASON_START
+    xmas = con.execute(f"""
+        WITH s AS (
+            SELECT artist, song, count(*) n,
+                   sum(CASE WHEN month(date_local) = 12
+                              OR (month(date_local) = {mo} AND day(date_local) >= {day})
+                            THEN 1 ELSE 0 END) x
+            FROM plays GROUP BY 1, 2 HAVING count(*) >= 20),
+        holiday AS (SELECT artist, song FROM s WHERE x::DOUBLE / n >= 0.9),
+        seasons AS (
+            SELECT year(date_local) y, min(date_local) d, count(*) n
+            FROM plays JOIN holiday USING (artist, song)
+            WHERE month(date_local) >= 9 GROUP BY 1)
+        SELECT d::VARCHAR, y, n, (SELECT count(*) FROM holiday)
+        FROM seasons ORDER BY y DESC LIMIT 1
+    """).fetchone()
+    if xmas:
+        first, year, n, k = xmas
+        d0 = date.fromisoformat(first)
+        out.append(rec("xmas", "When Christmas starts at Walmart",
+                       f"{d0.strftime('%B')} {d0.day}",
+                       f"the first of {k} holiday-only songs to surface in {year}, "
+                       f"{(date(year, 12, 25) - d0).days} days out. "
+                       f"{n:,} holiday plays followed before the year was over."))
 
     return out
 
@@ -569,6 +799,7 @@ def main():
     blank_days = sum((date.fromisoformat(b) - date.fromisoformat(a)).days + 1
                      for a, b in gaps)
     coverage = build_coverage(play_min, down, first_day, last_day, blank_days)
+    silence = build_silence(con, down)
 
     meta = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -585,6 +816,7 @@ def main():
         "changelog": changelog,
         "records": records,
         "coverage": coverage,
+        "silence": silence,
     }
 
     (DATA_OUT / "songs.json").write_text(json.dumps(songs_out, separators=(",", ":")))
@@ -623,6 +855,16 @@ def main():
           f"({coverage['outage_hours']}h, longest {coverage['longest_outage_hours']}h) · "
           f"{coverage['n_quiet']} short quiet blocks ({coverage['quiet_hours']}h)")
     print(f"changelog: {len(changelog)} weeks · records: {len(records)}")
+    if silence:
+        b, a = silence["before"], silence["after"]
+        print("silence grid: " + " · ".join(
+            f"{x['from']}–{x['to']} CT, {'every day' if x['days'] == 'every day' else x['days']}"
+            for x in silence["blocks"]))
+        print(f"  grid era: {b['days']} days, {b['silent_hours_per_day']}h/day silent, "
+              f"{b['plays_per_day']} plays/day"
+              + (f" · dropped {silence['changeover']}: {a['days']} days since, "
+                 f"{a['silent_hours_per_day']}h/day silent, {a['plays_per_day']} plays/day"
+                 if a else " · still in force"))
 
 
 if __name__ == "__main__":
