@@ -1,0 +1,136 @@
+# 📻 Recently played at Walmart
+
+**→ [scubdon.github.io/wmradio](https://scubdon.github.io/wmradio/)**
+
+(Almost) every song the in-store Walmart Radio stream has played since May 2024,
+logged minute by minute and refreshed daily — and what two years of it reveals
+about how the station is programmed.
+
+This is an independent, non-commercial record of a public broadcast, compiled by
+listening to the stream. Not affiliated with, sponsored by, or endorsed by
+Walmart.
+
+---
+
+## The data
+
+The whole log is published with the site, regenerated on every build:
+
+| File | Rows | Format |
+|---|---|---|
+| [`plays.csv`](https://scubdon.github.io/wmradio/data/plays.csv) | one per play | plain text, one header row |
+| [`plays.parquet`](https://scubdon.github.io/wmradio/data/plays.parquet) | one per play | zstd-compressed, typed timestamps |
+
+Three columns, and no sampling or aggregation — it is the same file the charts
+are built from:
+
+- **`played_at_utc`** — when the track change was observed. UTC, second
+  precision, naive (no offset suffix).
+- **`artist`** — exactly as the stream reported it. Not normalised or
+  deduplicated against MusicBrainz.
+- **`song`** — the title as reported, including any "(Feat. …)" or remix credit.
+
+Song identity is the `(artist, song)` pair.
+
+**Before you build on it:** play counts are lower bounds. About 75% of the clock
+hours in the span contain at least one logged play; most of the rest is the
+station's own doing rather than the logger's. Until April 2026 the stream ran a
+fixed daily grid of quiet hours (see below), and there are a couple of dozen
+genuine logger outages on top of that. The site's
+[Use the data](https://scubdon.github.io/wmradio/#dataSection) section lists
+every outage and explains how coverage is measured — check anything that
+compares two time periods against it.
+
+## What the site works out
+
+Nobody publishes what's in rotation on Walmart Radio, so the site derives it
+from the log alone. Each analysis on the page carries a "How this is worked out"
+panel stating its thresholds and what it can't tell you.
+
+- **The rotation pool and its tiers** — how often each song comes round, and
+  which tracks entered or were retired against the previous window.
+- **A weekly rotation changelog** — the same pool test re-run at weekly
+  intervals, so turnover becomes a series rather than a single number.
+- **Day and night are different stations** — songs are tested against a
+  station-wide night baseline on Central time, and far more of them skew than
+  chance allows.
+- **The station's daily schedule, read off the silences** — the stream announces
+  track changes and nothing else, so an hour that logs nothing is an hour it
+  wasn't playing songs. Those hours land on the same Central-time slots every
+  day. Matched afterwards against the station's own published programming page,
+  they are its three live talk shows, to the hour.
+- **Records & oddities**, seasonal concentration, per-song and per-artist pages
+  with play calendars and dot-per-play scatters, a personal "your shift"
+  breakdown, and a searchable dataset explorer.
+
+## How it works
+
+```
+the stream's public metadata endpoint
+  │  polled every minute by a Cloud Function
+  ▼
+gs://wmradio-metadata/plays/date=YYYY-MM-DD/*.json     one small object per play
+  │
+  │  daily GitHub Action (.github/workflows/daily.yml)
+  ▼
+  download gs://wmradio-metadata/db/radio_plays.duckdb   ← canonical database
+  scripts/update_duckdb.py     ingest new plays, dedupe
+  scripts/fetch_artwork.py     cover art via MusicBrainz + Cover Art Archive
+  upload the database back
+  dashboard/build.py           DuckDB → compact JSON + CSV/Parquet for the site
+  ▼
+GitHub Pages — dashboard/site/, static, no dependencies, no build step
+```
+
+The database is the canonical artifact and lives in the GCS bucket, not in git.
+The Action downloads it, refreshes it, uploads it back, and rebuilds the site
+from it.
+
+## Repo layout
+
+```
+dashboard/build.py        all the analysis: DuckDB → site/data/*.json
+dashboard/site/           the site itself — index.html, app.js, style.css
+scripts/update_duckdb.py  idempotent daily ingest from the bucket
+scripts/fetch_artwork.py  artwork lookup, idempotent, misses recorded
+artwork/artwork_small/    150px thumbnails used by the site
+.github/workflows/        the daily refresh-and-deploy Action
+```
+
+The front end is vanilla JavaScript over three pre-built JSON files — no
+framework, no bundler, no dependencies. Anything a browser can derive in one
+pass over the play log (per-song counts, recent-window totals, gaps between
+plays) is left to the client; only cross-song work that would need the whole log
+resident is precomputed in `build.py`.
+
+## Running it locally
+
+The database isn't in the repo, so a full local run needs read access to the
+bucket. With that:
+
+```bash
+pip install duckdb requests
+mkdir -p data
+gcloud storage cp gs://wmradio-metadata/db/radio_plays.duckdb data/
+python3 scripts/update_duckdb.py --skip-csv
+python3 dashboard/build.py
+python3 -m http.server 8137 --directory dashboard/site
+```
+
+Without it, the published `plays.csv` / `plays.parquet` are the same data — load
+either one into DuckDB and the queries in `build.py` will run against a table
+with `played_at_utc, artist, song`.
+
+## Credits
+
+Artwork via the [Cover Art Archive](https://coverartarchive.org) and
+[MusicBrainz](https://musicbrainz.org), and from the stream's own metadata.
+Album art remains the property of its respective rights holders and appears at
+thumbnail size to illustrate the play data.
+
+Times are recorded in UTC and shown in your browser's timezone, except the
+day/night and schedule analyses, which use Central time — the station's own
+clock.
+
+Corrections and removal requests are welcome —
+[open an issue](https://github.com/scubdon/wmradio/issues).

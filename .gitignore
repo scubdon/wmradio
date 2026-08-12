@@ -14,7 +14,7 @@ dashboard/site/data/
 # Local-only: planning notes and dev tooling, kept out of the public repo
 PLAN.md
 Potential features.md
-README.md
+docs/
 radio_schedule_table.html
 cloud_run_function/
 .claude/
