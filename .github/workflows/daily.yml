@@ -26,6 +26,12 @@ concurrency:
 jobs:
   refresh-and-deploy:
     runs-on: ubuntu-latest
+    # A run that stalls before a runner is even assigned holds the concurrency
+    # group, and GitHub then cancels every later run while it is still pending —
+    # which has twice left a merge unpublished until the next day's cron picked
+    # it up. A full run takes about three minutes, so this only ever fires on a
+    # stall, and a stalled run self-clears instead of blocking the queue.
+    timeout-minutes: 20
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

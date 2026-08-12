@@ -12,6 +12,7 @@
   --series-1: #2a78d6;
   --series-1-wash: rgba(42, 120, 214, 0.10);
   --series-2: #b26a12;
+  --series-3: #1f7a6b;
   /* Sequential ramp: pale → saturated blue. More always means more blue. */
   --seq-100: #e3eefc; --seq-200: #c3ddf9; --seq-300: #97c3f1;
   --seq-400: #63a2e8; --seq-500: #3781da; --seq-600: #1d63b4; --seq-700: #114684;
@@ -34,6 +35,7 @@
     --series-1: #3987e5;
     --series-1-wash: rgba(57, 135, 229, 0.14);
     --series-2: #d99a3c;
+    --series-3: #46b5a0;
     /* Same direction on dark: steps climb in brightness AND in blue
        saturation, so the busiest cells read as the most colour — never as
        washed-out white, which reads like emptiness on a dark surface. */
@@ -318,6 +320,17 @@ table.tbl.exp td.namecell span { overflow: hidden; text-overflow: ellipsis; }
 .badge.s-dormant { color: var(--muted); }
 
 /* ---- records ---- */
+/* show roster under the silence grid, and the same rows inside wrapped */
+.shows { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px;
+  margin-top: 14px; }
+.showcard { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  border-left-width: 3px; border-left-style: solid; min-width: 0; }
+.showcard .sname { font-size: 14px; font-weight: 650; }
+.showcard .sslot { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.showcard .shrs { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin-top: 8px;
+  font-variant-numeric: tabular-nums; }
+.showcard .syrs { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 .records { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; }
 .record {
   text-align: left; font: inherit; color: inherit; cursor: pointer;
