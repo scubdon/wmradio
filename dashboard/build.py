@@ -58,10 +58,32 @@ OUTAGE_MIN_MINUTES = 6 * 60
 # station rather than the logger.
 QUIET_MIN_MINUTES = 45
 
-# A day is "gridded" if this many Central-time hours logged nothing at all.
-# The scheduled blocks take out six or seven hours a day; a day running music
-# round the clock takes out none. Nothing sits in between, so the cut is safe.
+# An hour counts as off air if it logged at most this many track changes. Not
+# zero: a song that starts a minute before the top of the hour still lands one
+# row inside it, which is why the midnight block looked half-hearted when this
+# was a zero test. The distribution is starkly bimodal — across the grid era,
+# hours inside a show slot come in at 0, 1, 2 or 3 changes (3,756 of them) or at
+# 12+ (290, the December suspension); nothing at all lands in between.
+SILENT_MAX_PLAYS = 2
+
+# A day is "gridded" if this many Central-time hours were off air. The show
+# blocks take out seven a day; a day running music round the clock takes out
+# none. Nothing sits in between, so the cut is safe.
 GRID_MIN_SILENT_HOURS = 4
+
+# The station's own published schedule (its programming page, as kept locally in
+# radio_schedule_table.html). Only the personality shows are listed here, and
+# only because the log independently says they are the silent hours: every slot
+# below is a metadata blackout, and every music block on the same schedule —
+# Walmart World Music, Walmart World Overnights, the 8–10a Sensory Hours —
+# reports track changes as normal. The names are the station's; the hours below
+# are what the log actually shows, recomputed every build.
+WEEKDAYS, WEEKEND, EVERY_DAY = frozenset(range(5)), frozenset({5, 6}), frozenset(range(7))
+SHOWS = [
+    ("The Chris Show", [(6, 8, WEEKDAYS), (6, 7, WEEKEND), (18, 19, EVERY_DAY)]),
+    ("The Bo Show", [(0, 1, EVERY_DAY), (12, 13, EVERY_DAY)]),
+    ("Kirby Gwen & Friends", [(3, 4, EVERY_DAY), (15, 16, EVERY_DAY)]),
+]
 
 # "Seasonal" is derived, not keyword-matched: a song whose plays cluster in the
 # run-up to Christmas. Nov 15 – Dec 31 is the window the log's December spike
@@ -276,6 +298,11 @@ def build_coverage(plays_min, down, first_day, last_day, n_gap_days):
 DOW_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
+def deltas(xs):
+    """First value zero, then successive differences — the client re-adds t0."""
+    return [b - a for a, b in zip(xs[:1] + xs, xs)]
+
+
 def describe_days(dows):
     if len(dows) == 7:
         return "every day"
@@ -327,7 +354,8 @@ def build_silence(con, down):
     if not days:
         return None
 
-    silent = {d: {h for h in range(24) if h not in by_day[d]} for d in days}
+    silent = {d: {h for h in range(24) if by_day[d].get(h, 0) <= SILENT_MAX_PLAYS}
+              for d in days}
     gridded = {d for d in days if len(silent[d]) >= GRID_MIN_SILENT_HOURS}
 
     # The changeover is the start of the run of gridless days that reaches the
@@ -388,11 +416,77 @@ def build_silence(con, down):
             blocks.append({"from": h, "to": j + 1, "days": describe_days(per_hour[h])})
             h = j + 1
 
+    # --- match the derived blocks against the station's published schedule ---
+    # The grid above was read off the log without reference to any schedule.
+    # This is the check, and it is the whole argument: if the named shows are
+    # what fills the blocks, then every show hour should be off air and every
+    # other hour should not.
+    slot_of = {}
+    for i, (name, slots) in enumerate(SHOWS):
+        for a, b, dows in slots:
+            for h in range(a, b):
+                for w in dows:
+                    slot_of[(w, h)] = i
+
+    hit = miss = false_alarm = clear = 0
+    per_show = [{"name": name, "hours": 0, "by_year": {}, "slots": slots}
+                for name, slots in SHOWS]
+    occ = []            # (start_epoch_minute, minutes, show index) for observed hours
+    for d in days:
+        if d not in gridded:
+            continue
+        dt = date.fromisoformat(d)
+        w = dt.weekday()
+        for h in range(24):
+            off = h in silent[d]
+            show = slot_of.get((w, h))
+            if show is None:
+                false_alarm += off
+                clear += not off
+                continue
+            hit += off
+            miss += not off
+            if off:
+                s = per_show[show]
+                s["hours"] += 1
+                s["by_year"][dt.year] = s["by_year"].get(dt.year, 0) + 1
+                start = datetime(dt.year, dt.month, dt.day, h, tzinfo=CT)
+                occ.append((int(start.timestamp()) // 60, 60, show))
+
+    # Merge each show's adjacent hours into one on-air stretch, so a listener's
+    # 6–8am is one two-hour block rather than two ones.
+    occ.sort()
+    merged = []
+    for start, mins, show in occ:
+        if merged and merged[-1][2] == show and merged[-1][0] + merged[-1][1] == start:
+            merged[-1][1] += mins
+        else:
+            merged.append([start, mins, show])
+
+    for s in per_show:
+        s["by_year"] = sorted(s["by_year"].items())
+        s["slots"] = [[a, b, describe_days(set(dows))] for a, b, dows in s["slots"]]
+
     return {
         "changeover": changeover,
         "blocks": blocks,
         "before": before,
         "after": after,
+        "shows": {
+            "names": [name for name, _ in SHOWS],
+            "per_show": per_show,
+            # Delta-encoded so the occurrence list stays small in meta.json.
+            "t0": merged[0][0] if merged else 0,
+            "dt": deltas([m[0] for m in merged]),
+            "mins": [m[1] for m in merged],
+            "s": [m[2] for m in merged],
+            "match": {
+                "show_hours_off": hit,
+                "show_hours_total": hit + miss,
+                "other_hours_off": false_alarm,
+                "other_hours_total": false_alarm + clear,
+            },
+        },
     }
 
 
@@ -865,6 +959,12 @@ def main():
               + (f" · dropped {silence['changeover']}: {a['days']} days since, "
                  f"{a['silent_hours_per_day']}h/day silent, {a['plays_per_day']} plays/day"
                  if a else " · still in force"))
+        m = silence["shows"]["match"]
+        print(f"  schedule match: {m['show_hours_off']}/{m['show_hours_total']} published show "
+              f"hours off air; {m['other_hours_off']}/{m['other_hours_total']} other hours off air")
+        for s in silence["shows"]["per_show"]:
+            print(f"    {s['name']}: {s['hours']:,}h — "
+                  + ", ".join(f"{y}: {n:,}h" for y, n in s["by_year"]))
 
 
 if __name__ == "__main__":
