@@ -6,8 +6,8 @@ Emits into dashboard/site/data/:
   songs.json  — [[artist, song, artwork_file|null, total_plays], ...]; song id = index
   plays.json  — {"t0": <epoch-minute>, "dt": [...], "s": [...]}
                 delta-encoded UTC epoch-minutes + song ids, ascending
-  meta.json   — totals, recording gaps, rotation inference, weekly rotation
-                changelog, records & oddities, dataset coverage
+  meta.json   — totals, recording gaps, rotation inference, records & oddities,
+                dataset coverage
   plays.csv / plays.parquet — full play log (played_at_utc, artist, song)
                 for public download; linked from the site footer
 
@@ -42,9 +42,6 @@ CT = ZoneInfo("America/Chicago")
 
 ROTATION_WINDOW_DAYS = 28
 ROTATION_MIN_PLAYS = 3
-
-# Rotation changelog: how many 7-day steps of pool-vs-pool comparison to publish.
-CHANGELOG_WEEKS = 26
 
 # What counts as the logger being down, as opposed to the stream simply not
 # reporting a track. Deliberately conservative: hour-long silences are common
@@ -220,32 +217,6 @@ def build_rotation(cur_rows, prev_counts, skew_rows, spans):
         "prev_pool": len(prev_ids),
         "daynight": daynight,
     }
-
-
-def build_changelog(rows, max_ts, weeks=CHANGELOG_WEEKS):
-    """
-    The same pool test as build_rotation, re-run at weekly intervals, so the
-    turnover figure becomes a series instead of a single number: you can see
-    Walmart actually swapping tracks in and out week by week.
-
-    rows: (ts_utc, song_id) covering at least weeks*7 + ROTATION_WINDOW_DAYS days.
-    """
-    ends = [max_ts - timedelta(days=7 * i) for i in range(weeks, -1, -1)]
-    pools = []
-    for end in ends:
-        start = end - timedelta(days=ROTATION_WINDOW_DAYS)
-        c = Counter(sid for ts, sid in rows if start <= ts < end)
-        pools.append({sid for sid, n in c.items() if n >= ROTATION_MIN_PLAYS})
-
-    out = []
-    for i in range(1, len(pools)):
-        out.append([
-            ends[i].date().isoformat(),
-            len(pools[i] - pools[i - 1]),
-            len(pools[i - 1] - pools[i]),
-            len(pools[i]),
-        ])
-    return out
 
 
 def outage_spans(plays_min):
@@ -828,14 +799,6 @@ def main():
         {songs_index[(a, s)]: (f, l) for a, s, f, l in span_rows},
     )
 
-    # --- weekly rotation changelog ---------------------------------------
-    log_cutoff = max_ts - timedelta(days=CHANGELOG_WEEKS * 7 + ROTATION_WINDOW_DAYS)
-    log_rows = con.execute(
-        "SELECT ts_utc, artist, song FROM plays WHERE ts_utc >= ?", [log_cutoff]
-    ).fetchall()
-    changelog = build_changelog(
-        [(ts, songs_index[(a, s)]) for ts, a, s in log_rows], max_ts)
-
     # --- weekly debuts (songs first ever heard that week) ---
     debuts = con.execute("""
         WITH firsts AS (SELECT artist, song, min(ts_utc) f FROM plays GROUP BY 1,2)
@@ -907,7 +870,6 @@ def main():
         "weekly_debuts": [[w, n] for w, n in debuts],
         "trends": [[mo, p, d, t, f] for mo, p, d, t, f in trends],
         "rotation": rotation,
-        "changelog": changelog,
         "records": records,
         "coverage": coverage,
         "silence": silence,
@@ -948,7 +910,7 @@ def main():
           f"{coverage['span_days']} days · {coverage['n_outages']} outages "
           f"({coverage['outage_hours']}h, longest {coverage['longest_outage_hours']}h) · "
           f"{coverage['n_quiet']} short quiet blocks ({coverage['quiet_hours']}h)")
-    print(f"changelog: {len(changelog)} weeks · records: {len(records)}")
+    print(f"records: {len(records)}")
     if silence:
         b, a = silence["before"], silence["after"]
         print("silence grid: " + " · ".join(

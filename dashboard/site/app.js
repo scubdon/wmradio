@@ -198,9 +198,9 @@ function renderFindings() {
   const items = [
     [fmtInt(rot.pool_size), "songs in rotation right now", "#rotationSection"],
     [`+${rot.n_entered} / −${rot.n_left}`,
-     `swapped in and out in ${rot.window_days} days`, "#changelogWrap"],
+     `swapped in and out in ${rot.window_days} days`, "#enteredList"],
     [pct(locked), "of songs are day-only or night-only", "#dnSub"],
-    [pct(lastMonth[3]), "of airtime came from 50 songs last month", "#trendWrap"],
+    [pct(lastMonth[3]), "of airtime came from 50 songs last month", "#tierRows"],
   ];
   const sil = META.silence;
   if (sil && sil.shows) {
@@ -290,7 +290,6 @@ function renderTopSection() {
 
   toggleMore($("#moreSongs"), songRows.length);
   toggleMore($("#moreArtists"), artistRows.length);
-  renderHeatmap(start);
 }
 function toggleMore(btn, total) {
   btn.hidden = topLimit >= total;
@@ -315,56 +314,6 @@ function renderRankList(root, rows, opts) {
   });
 }
 
-// ---------- heatmap ----------
-function renderHeatmap(start) {
-  const grid = Array.from({ length: 7 }, () => new Array(24).fill(0));
-  for (let i = start; i < N; i++) grid[LDOW[i]][LHOUR[i]]++;
-  const max = Math.max(1, ...grid.flat());
-
-  // Sequential ramp: more plays = more saturated blue, in both themes.
-  const ramp = rampColors();
-  const colorFor = v => v === 0 ? null : ramp[Math.min(6, Math.floor((v / max) * 7))];
-
-  const cw = 30, ch = 22, left = 34, top = 18;
-  const W = left + 24 * cw + 6, H = top + 7 * ch + 6;
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
-    "aria-label": "Plays by hour and day of week" });
-  for (let h = 0; h < 24; h += 3)
-    svg.append(svgText(left + h * cw + cw / 2, 12, hourLabel(h), "middle"));
-  for (let d = 0; d < 7; d++) {
-    svg.append(svgText(left - 6, top + d * ch + ch / 2 + 4, DOW_LABELS[d], "end"));
-    for (let h = 0; h < 24; h++) {
-      const v = grid[d][h];
-      const rect = svgEl("rect", {
-        x: left + h * cw + 1, y: top + d * ch + 1, width: cw - 2, height: ch - 2,
-        rx: 3, fill: colorFor(v) || "transparent",
-        stroke: v === 0 ? "var(--grid)" : "none", "stroke-width": 1,
-      });
-      rect.dataset.tip = JSON.stringify({ v: `${fmtInt(v)} plays`, l: `${DOW_LABELS[d]} ${hourLabel(h)}–${hourLabel((h + 1) % 24)}` });
-      svg.append(rect);
-    }
-  }
-  $("#heatWrap").replaceChildren(svg);
-  attachCellTips(svg, $("#heatWrap"));
-
-  const scale = $("#heatScale");
-  scale.replaceChildren(el("span", null, "fewer plays"));
-  const sw = el("div", "swatches");
-  ramp.forEach(c => { const i = el("i"); i.style.background = c; sw.append(i); });
-  scale.append(sw, el("span", null, "more plays"));
-
-  const tbl = el("table", "tbl");
-  const hr = el("tr"); hr.append(el("th", null, ""));
-  for (let h = 0; h < 24; h += 3) hr.append(el("th", null, hourLabel(h)));
-  tbl.append(hr);
-  for (let d = 0; d < 7; d++) {
-    const tr = el("tr"); tr.append(el("td", null, DOW_LABELS[d]));
-    for (let h = 0; h < 24; h += 3)
-      tr.append(el("td", null, fmtInt(grid[d].slice(h, h + 3).reduce((a, b) => a + b))));
-    tbl.append(tr);
-  }
-  $("#heatTable").replaceChildren(tbl);
-}
 const hourLabel = h => h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`;
 const andList = xs => xs.length < 2 ? xs.join("")
   : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
@@ -856,8 +805,6 @@ function renderRotation() {
     sid, n, t1: SONGS[sid][1], t2: SONGS[sid][0], art: SONGS[sid][2], nLabel: `${n}×` })));
 
   renderDropped();
-  renderChangelog();
-  renderTrends();
 
   // day / night
   $("#dnSub").textContent =
@@ -1112,84 +1059,6 @@ function renderDropped() {
   $("#droppedList").replaceChildren(tbl);
 }
 
-// ---------- rotation changelog ----------
-function renderChangelog() {
-  const cl = META.changelog;
-  if (!cl || cl.length < 2) return;
-  const totIn = cl.reduce((a, r) => a + r[1], 0), totOut = cl.reduce((a, r) => a + r[2], 0);
-  $("#changelogSub").textContent =
-    `The pool test re-run every week for ${cl.length} weeks. ${fmtInt(totIn)} entries and ` +
-    `${fmtInt(totOut)} exits over that stretch, against a pool that has stayed within a few ` +
-    `hundred titles of ${fmtInt(cl[cl.length - 1][3])} — the station is not growing its ` +
-    `library so much as continuously cycling it.`;
-
-  const W = 900, H = 220, left = 42, right = 44, top = 12, bottom = 26;
-  const iw = W - left - right, ih = H - top - bottom;
-  const maxBar = Math.max(...cl.map(r => Math.max(r[1], r[2])));
-  const maxPool = Math.max(...cl.map(r => r[3]));
-  const bw = iw / cl.length;
-  const mid = top + ih / 2;
-  const yBar = v => (v / maxBar) * (ih / 2);
-  const yPool = v => top + ih - (v / maxPool) * ih;
-
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
-    "aria-label": "Songs entering and leaving rotation each week" });
-  svg.append(svgEl("line", { x1: left, x2: W - right, y1: mid, y2: mid, class: "axis-line" }));
-
-  cl.forEach((r, i) => {
-    const [wk, nIn, nOut, pool] = r;
-    const x = left + i * bw + bw * 0.15, w = Math.max(1.5, bw * 0.7);
-    for (const [v, up] of [[nIn, true], [nOut, false]]) {
-      if (!v) continue;
-      const h = Math.max(1.5, yBar(v));
-      const rect = svgEl("rect", { x, y: up ? mid - h : mid, width: w, height: h,
-        rx: 1.5, fill: up ? "var(--series-1)" : "var(--series-2)" });
-      rect.dataset.tip = JSON.stringify({
-        v: `${up ? "+" : "−"}${v} song${v === 1 ? "" : "s"} ${up ? "entered" : "left"}`,
-        l: `week ending ${wk} · pool ${fmtInt(pool)}` });
-      svg.append(rect);
-    }
-    if (i % 4 === 0)
-      svg.append(svgText(left + i * bw + bw / 2, H - 7,
-        keyMonthFmt.format(new Date(wk + "T12:00:00")), "middle"));
-  });
-
-  let d = "";
-  cl.forEach((r, i) => { d += `${i ? " L" : "M"} ${(left + i * bw + bw / 2).toFixed(1)} ${yPool(r[3]).toFixed(1)}`; });
-  svg.append(svgEl("path", { d, fill: "none", stroke: "var(--ink-2)", "stroke-width": 1.4,
-    "stroke-dasharray": "4 3", opacity: 0.75 }));
-  svg.append(svgText(W - right + 6, yPool(cl[cl.length - 1][3]) + 4,
-    fmtInt(cl[cl.length - 1][3]), "start"));
-  svg.append(svgText(left - 6, mid - ih / 2 + 10, "in", "end"));
-  svg.append(svgText(left - 6, mid + ih / 2, "out", "end"));
-
-  $("#changelogWrap").replaceChildren(svg);
-  attachCellTips(svg, $("#changelogWrap"));
-
-  const lg = $("#changelogLegend");
-  lg.replaceChildren();
-  [["var(--series-1)", "Entered rotation that week"],
-   ["var(--series-2)", "Left rotation that week"],
-   ["var(--ink-2)", "Total pool size"]].forEach(([c, label]) => {
-    const item = el("span", "lgi");
-    const dot = el("i"); dot.style.background = c;
-    item.append(dot, document.createTextNode(label));
-    lg.append(item);
-  });
-
-  const tbl = el("table", "tbl");
-  const hr = el("tr");
-  for (const h of ["Week ending", "Entered", "Left", "Pool"]) hr.append(el("th", null, h));
-  tbl.append(hr);
-  for (const [wk, nIn, nOut, pool] of cl.slice().reverse()) {
-    const tr = el("tr");
-    tr.append(el("td", null, wk), el("td", "num", `+${nIn}`),
-              el("td", "num", `−${nOut}`), el("td", "num", fmtInt(pool)));
-    tbl.append(tr);
-  }
-  $("#changelogTable").replaceChildren(tbl);
-}
-
 // ---------- records & oddities ----------
 function renderRecords() {
   const wrap = $("#recordsList");
@@ -1203,50 +1072,6 @@ function renderRecords() {
                 el("div", "rsub", r.sub));
     wrap.append(card);
   }
-}
-
-function renderTrends() {
-  // Both measures are sensitive to how many plays a month has, so only
-  // near-complete months qualify. The first survivor is then dropped too: its
-  // "not heard last month" figure is measured against a stub of a month.
-  const tr = META.trends.filter(t => t[1] >= 8000).slice(1);
-  const W = 460, H = 190, left = 34, right = 8, top = 10, bottom = 24;
-  const iw = W - left - right, ih = H - top - bottom;
-  const x = i => left + (i / (tr.length - 1)) * iw;
-  const y = v => top + ih - v * ih;
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
-    "aria-label": "Playlist concentration and freshness by month" });
-  for (let v = 0; v <= 1; v += 0.25) {
-    svg.append(svgEl("line", { x1: left, x2: W - right, y1: y(v), y2: y(v),
-      class: v === 0 ? "axis-line" : "grid-line" }));
-    svg.append(svgText(left - 6, y(v) + 4, pct(v), "end"));
-  }
-  tr.forEach((t, i) => {
-    const dt = new Date(t[0] + "T00:00:00");
-    if (dt.getMonth() % 6 !== 0) return;
-    // Pin the end labels inward so they don't run off the viewBox.
-    const anchor = i === 0 ? "start" : i === tr.length - 1 ? "end" : "middle";
-    svg.append(svgText(x(i), H - 8, monthFmt.format(dt), anchor));
-  });
-  const line = (idx, stroke) => {
-    let d = "";
-    tr.forEach((t, i) => { d += `${i ? " L" : "M"} ${x(i).toFixed(1)} ${y(t[idx]).toFixed(1)}`; });
-    svg.append(svgEl("path", { d, fill: "none", stroke, "stroke-width": 1.6,
-      "stroke-linejoin": "round" }));
-  };
-  line(3, "var(--series-1)");
-  line(4, "var(--series-2)");
-  $("#trendWrap").replaceChildren(svg);
-
-  const lg = $("#trendLegend");
-  lg.replaceChildren();
-  [["var(--series-1)", "Airtime from the month's top 50 songs"],
-   ["var(--series-2)", "Airtime from songs not heard the month before"]].forEach(([c, label]) => {
-    const item = el("span", "lgi");
-    const dot = el("i"); dot.style.background = c;
-    item.append(dot, document.createTextNode(label));
-    lg.append(item);
-  });
 }
 
 // ---------- dataset explorer ----------
