@@ -20,12 +20,14 @@ The whole log is published with the site, regenerated on every build:
 |---|---|---|
 | [`plays.csv`](https://scubdon.github.io/wmradio/data/plays.csv) | one per play | plain text, one header row |
 | [`plays.parquet`](https://scubdon.github.io/wmradio/data/plays.parquet) | one per play | zstd-compressed, typed timestamps |
+| [`README.txt`](https://scubdon.github.io/wmradio/data/README.txt) | — | data dictionary, coverage and outage list |
 
 Three columns, and no sampling or aggregation — it is the same file the charts
 are built from:
 
 - **`played_at_utc`** — when the track change was observed. UTC, second
-  precision, naive (no offset suffix).
+  precision. ISO 8601 with an explicit `Z` in the CSV
+  (`2026-08-13T12:34:56Z`); a UTC-aware timestamp in the Parquet.
 - **`artist`** — exactly as the stream reported it. Not normalised or
   deduplicated against MusicBrainz.
 - **`song`** — the title as reported, including any "(Feat. …)" or remix credit.

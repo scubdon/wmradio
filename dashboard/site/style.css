@@ -58,6 +58,38 @@ body {
 }
 .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px 80px; }
 
+/* ---- section nav ----
+   The page is long and every section is a different question. This is a way
+   back to the top of one of them, not a site menu — it stays out of the way
+   and disappears entirely on a phone, where the scroll is the navigation. */
+.sitenav {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.navinner {
+  max-width: 1080px; margin: 0 auto; padding: 0 20px;
+  display: flex; align-items: center; gap: 20px; height: 44px;
+}
+.navbrand {
+  font-size: 13px; font-weight: 650; color: var(--ink); text-decoration: none;
+  white-space: nowrap; letter-spacing: -0.01em;
+}
+.navlinks { display: flex; gap: 16px; overflow-x: auto; scrollbar-width: none; }
+.navlinks::-webkit-scrollbar { display: none; }
+.navlinks a {
+  font-size: 12.5px; color: var(--muted); text-decoration: none; white-space: nowrap;
+  padding: 2px 0; border-bottom: 2px solid transparent;
+}
+.navlinks a:hover { color: var(--ink); border-bottom-color: var(--accent-ink); }
+/* Anchor targets have to clear the sticky bar. */
+section { scroll-margin-top: 56px; }
+@media (max-width: 720px) {
+  .sitenav { position: static; }
+  .navbrand { display: none; }
+}
+
 header.site { padding: 40px 0 8px; }
 header.site h1 { font-size: 30px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.02em; }
 header.site p { margin: 0; color: var(--ink-2); max-width: 62ch; }
@@ -352,10 +384,75 @@ div.record { cursor: default; }
 }
 .dayrow .flag.hot { color: var(--series-2); border-color: currentColor; }
 .dayrow .flag.dim { color: var(--muted); }
+.dayrow .flag.new { color: var(--series-3); border-color: currentColor; font-weight: 600; }
+.dayrow .flag.back { color: var(--series-2); border-color: var(--border); }
 .daygap {
   color: var(--muted); font-size: 12px; text-align: center; padding: 7px 0; margin: 3px 0;
   border-top: 1px dashed var(--baseline); border-bottom: 1px dashed var(--baseline);
 }
+
+/* ---- recurrence bands ---- */
+.recurbands {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px; margin-top: 14px;
+}
+.bandcard {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 9px; padding: 11px 13px;
+}
+.bandcard .bname { font-size: 13px; font-weight: 650; }
+.bandcard .brange { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bandcard .bsongs {
+  font-size: 20px; font-weight: 650; letter-spacing: -0.02em; margin-top: 6px;
+  color: var(--accent-ink); font-variant-numeric: tabular-nums;
+}
+.bandcard .bblurb { font-size: 12px; color: var(--ink-2); margin-top: 2px; line-height: 1.35; }
+.bandcard .bbar {
+  position: absolute; left: 0; bottom: 0; height: 3px;
+  background: var(--series-1); opacity: 0.5;
+}
+
+/* ---- playlist turnover ---- */
+.turnover {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px;
+}
+.tocell {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px;
+}
+.tocell .tov {
+  font-size: 26px; font-weight: 650; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.tocell .tol { font-size: 12px; color: var(--ink-2); margin-top: 2px; line-height: 1.35; }
+.tocell .tobar { position: absolute; left: 0; bottom: 0; height: 3px; opacity: 0.65; }
+.tocell.in .tov { color: var(--series-1); }
+.tocell.in .tobar { background: var(--series-1); }
+.tocell.out .tov { color: var(--series-2); }
+.tocell.out .tobar { background: var(--series-2); }
+.tocell.same .tov { color: var(--ink-2); }
+.tocell.same .tobar { background: var(--baseline); }
+#turnoverCard .sub:last-child { margin: 12px 0 0; }
+
+/* ---- your radio vs everyone else's ---- */
+.versus { margin: 4px 0 14px; align-items: stretch; }
+.card.vs {
+  text-align: left; font: inherit; cursor: pointer; display: flex;
+  flex-direction: column; gap: 4px; padding: 14px 16px;
+}
+.card.vs.neutral { cursor: default; }
+.card.vs:not(.neutral):hover { border-color: var(--accent-ink); }
+.vseyebrow {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--muted);
+}
+.vsrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
+.vsrow .cover { width: 40px; height: 40px; flex: none; }
+.vstitle { font-size: 14px; font-weight: 600; line-height: 1.25; }
+.vsartist { font-size: 12px; color: var(--muted); }
+.vsbig { font-size: 21px; font-weight: 650; letter-spacing: -0.02em; color: var(--accent-ink); }
+.card.vs.down .vsbig { color: var(--series-2); }
+.vsnote { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
 
 /* ---- use the data ---- */
 .dl { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }

@@ -9,6 +9,23 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
 </head>
 <body>
+
+<nav class="sitenav" id="siteNav" aria-label="Sections">
+  <div class="navinner">
+    <a class="navbrand" href="#">Recently played at Walmart</a>
+    <div class="navlinks">
+      <a href="#recentSection">Recent</a>
+      <a href="#topSection">Charts</a>
+      <a href="#rotationSection">The playlist</a>
+      <a href="#recordsSection">Records</a>
+      <a href="#wrappedSection">Your radio</a>
+      <a href="#daySection">One day</a>
+      <a href="#browseSection">Browse</a>
+      <a href="#dataSection">Data</a>
+    </div>
+  </div>
+</nav>
+
 <div class="wrap">
 
 <div id="home">
@@ -96,6 +113,34 @@
         <summary>How this is worked out</summary>
         <div class="methbody" id="methRotation"></div>
       </details>
+    </div>
+
+    <div class="card" id="recurCard" style="margin-top:16px" hidden>
+      <h3 class="cardtitle">How long before you hear it again</h3>
+      <p class="sub" id="recurSub"></p>
+      <div class="chart-wrap" id="recurWrap"></div>
+      <p class="sub" id="recurFoot"></p>
+      <div class="recurbands" id="recurBands"></div>
+      <details class="tablewrap"><summary>The tightest rotations right now</summary>
+        <div id="recurFastest"></div></details>
+      <details class="meth">
+        <summary>How this is worked out</summary>
+        <div class="methbody" id="methRecur"></div>
+      </details>
+    </div>
+
+    <div class="card" id="turnoverCard" style="margin-top:16px">
+      <h3 class="cardtitle">How much the playlist changed</h3>
+      <p class="sub" id="turnoverSub"></p>
+      <div class="filters" id="turnoverFilters" role="group" aria-label="Comparison window">
+        <span class="flabel">Compared with</span>
+        <button class="chip" data-back="7">7 days ago</button>
+        <button class="chip" data-back="30" aria-pressed="true">30 days ago</button>
+        <button class="chip" data-back="90">90 days ago</button>
+        <button class="chip" data-back="365">a year ago</button>
+      </div>
+      <div class="turnover" id="turnoverStats"></div>
+      <p class="sub" id="turnoverFoot"></p>
     </div>
 
     <div class="cols2" style="margin-top:16px">
@@ -195,6 +240,7 @@
       <h3 class="cardtitle wraptitle">Your Walmart wrapped</h3>
       <div class="wrapped-summary" id="wrapSummary"></div>
       <p class="sub" id="wrapLede"></p>
+      <div class="cols2 versus" id="wrapVersus"></div>
       <div id="wrapShowsBlock" hidden>
         <h3 class="cardtitle" style="margin-top:18px">Shows your shift sat through</h3>
         <p class="sub" id="wrapShowsSub"></p>
@@ -256,7 +302,9 @@
         <h4 class="minih">Columns</h4>
         <table class="tbl dict">
           <tr><th>played_at_utc</th><td>Timestamp the track change was observed, UTC,
-              second precision. Naive — no offset suffix.</td></tr>
+              second precision. ISO 8601 with an explicit <code>Z</code> in the CSV
+              (<code>2026-08-13T12:34:56Z</code>); a UTC-aware timestamp in the
+              Parquet.</td></tr>
           <tr><th>artist</th><td>Artist string exactly as the stream reported it.
               Not normalised or deduplicated against MusicBrainz.</td></tr>
           <tr><th>song</th><td>Title as reported, including any
@@ -285,7 +333,8 @@
   <p>Want the data? Grab the full play log — one row per play, columns
      <code>played_at_utc, artist, song</code> — as
      <a href="data/plays.csv" download>CSV</a> or
-     <a href="data/plays.parquet" download>Parquet</a>. Refreshed daily
+     <a href="data/plays.parquet" download>Parquet</a>, with a
+     <a href="data/README.txt">data dictionary</a> alongside. Refreshed daily
      with the rest of the site; timestamps are UTC.
      <a href="#dataSection">More about the dataset →</a></p>
   <p id="footGaps"></p>
