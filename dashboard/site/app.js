@@ -287,8 +287,8 @@ function renderFindings() {
   if (sil && sil.shows) {
     const m = sil.shows.match;
     items.push([pct(m.show_hours_off / m.show_hours_total),
-      "of the station's live-show hours are silent in the log — that's how the " +
-      "schedule was found", "#silenceWrap"]);
+      "of the station's live-show hours carry no music in the log — the grid lines up " +
+      "with its published schedule", "#silenceWrap"]);
   }
   const wrap = $("#findings");
   wrap.replaceChildren();
@@ -678,10 +678,10 @@ function renderWrapVersus(counts, total, start) {
   }
 }
 
-// The shows are the one part of a shift nobody has a play count for — the
-// stream logs their silence, not their content. Same selection as everything
-// else in this section, measured in quarter-hours because a listener's slot
-// boundaries are half-hours and every real timezone offset divides into 15.
+// The shows are the one part of a shift nobody has a play count for — the log
+// holds no music inside their hours. Same selection as everything else in this
+// section, measured in quarter-hours because a listener's slot boundaries are
+// half-hours and every real timezone offset divides into 15.
 let SHOW_OCC = null;
 function showOccurrences() {
   if (SHOW_OCC) return SHOW_OCC;
@@ -719,8 +719,8 @@ function renderWrapShows() {
 
   const totalH = mins.reduce((a, b) => a + b, 0) / 60;
   $("#wrapShowsSub").textContent = totalH
-    ? `About ${fmtInt(Math.round(totalH))} hours of live radio inside those hours — talk, ` +
-      `not music, which is why none of it shows up in the counts above. Ended ` +
+    ? `About ${fmtInt(Math.round(totalH))} hours of live radio inside those hours — no music ` +
+      `is logged during the shows, so none of it shows up in the counts above. Ended ` +
       `${META.silence.changeover}.`
     : `None — the live shows ran until ${META.silence.changeover}, outside the window ` +
       `you have picked, or outside the hours you work.`;
@@ -1182,9 +1182,9 @@ function renderRecurrence() {
      `reading, so any genuine regularity has the best chance of showing.`],
     ["What this can't tell you",
      `Nothing about *why* a song is picked — the pool is clearly weighted, and this says ` +
-     `nothing about the weights. And a silence is a silence: during the years the programme ` +
-     `grid was running, roughly five hours a day had no music at all, which stretches some ` +
-     `gaps for reasons that have nothing to do with the song.`],
+     `nothing about the weights. And an hour with no music is still an hour: during the years ` +
+     `the live-show grid was running, roughly five hours a day carried none, which stretches ` +
+     `some gaps for reasons that have nothing to do with the song.`],
   ]);
 }
 
@@ -1263,12 +1263,11 @@ function renderTurnover() {
         : `${pct(-growth)} smaller, so it is tightening the pool as well as cycling it.`);
 }
 
-// ---------- the programme grid, read off the silences ----------
-// The stream reports a track change and nothing else. So an hour that logged
-// nothing is an hour it was not playing songs — and those hours land on the
-// same Central-time slots every day, which is a schedule. It is the only view
-// of the schedule this dataset contains, and it is drawn entirely from what is
-// missing.
+// ---------- the live shows and their daily grid ----------
+// Three live shows held fixed Central-time slots, seven days a week, until the
+// grid was dropped. The slots below are the station's own published schedule;
+// the grid charts how much music the log holds in each hour against them. No
+// music is logged inside the show hours, so the chart reads as the schedule.
 function renderSilence() {
   const s = META.silence;
   if (!s || !s.before) return;
@@ -1286,17 +1285,12 @@ function renderSilence() {
   const blockText = [...byDays].map(([days, hrs]) =>
     `the ${andList(hrs)} hour${hrs.length > 1 ? "s" : ""} ` +
     `${days === "every day" ? days : "on " + days}`).join(", plus ");
-  // The order matters: the grid was read off the log first, and only then
-  // compared against the station's schedule. Stating it the other way round
-  // would make it sound like the schedule was assumed and the log fitted to it.
   $("#silenceSub").textContent =
-    `For ${fmtInt(b.days)} days the stream logged nothing at all for about ` +
-    `${b.silent_hours_per_day} hours out of every 24 — always the same hours: ` +
-    `${blockText}. Line those up against the station's own published schedule and ` +
-    `they are its three live shows, to the hour. ` +
-    `${pct(m.show_hours_off / m.show_hours_total)} of the hours its schedule gives to a live ` +
-    `show logged no music at all — against ${fmtInt(m.other_hours_off)} of the other ` +
-    `${fmtInt(m.other_hours_total)} hours in the day.`;
+    `For ${fmtInt(b.days)} days the station ran three live shows on a fixed daily grid — ` +
+    `${andList(sh.names)} — taking about ${b.silent_hours_per_day} hours out of every 24: ` +
+    `${blockText}, on Central time. The slots come from the station's own published ` +
+    `schedule, down to the morning show running two hours on weekdays and one at ` +
+    `weekends. The grid below shows them against the music log.`;
 
   const cw = 30, ch = 22, left = 34, top = 18, gap = 40;
   const rows = a ? 8 : 7;
@@ -1336,9 +1330,9 @@ function renderSilence() {
       const share = b.grid[d][h] || 0, plays = b.plays[d][h];
       const si = showAt.get(d * 24 + h);
       cell(left + h * cw, y, share, si == null ? "var(--muted)" : SHOW_COLORS[si], {
-        v: si == null ? `${pct(share)} of them silent` : sh.names[si],
+        v: si == null ? `${pct(share)} with no music` : sh.names[si],
         l: `${DOW_LABELS[d]} ${hourLabel(h)}–${hourLabel((h + 1) % 24)} Central · ` +
-           `off air on ${pct(share)} of ${fmtInt(b.days)} days · ` +
+           `no music logged on ${pct(share)} of ${fmtInt(b.days)} days · ` +
            `${plays} plays an hour on average` });
     }
   }
@@ -1351,7 +1345,7 @@ function renderSilence() {
       let sil = 0, plays = 0;
       for (let d = 0; d < 7; d++) { sil += a.grid[d][h] || 0; plays += a.plays[d][h] || 0; }
       cell(left + h * cw, y, sil / 7, "var(--muted)", {
-        v: `${pct(sil / 7)} of them silent`,
+        v: `${pct(sil / 7)} with no music`,
         l: `${hourLabel(h)}–${hourLabel((h + 1) % 24)} Central · ${(plays / 7).toFixed(1)} plays ` +
            `an hour on average, over ${fmtInt(a.days)} days since ${a.from}` });
     }
@@ -1369,7 +1363,7 @@ function renderSilence() {
     item.append(dot, document.createTextNode(name));
     scale.append(item);
   });
-  scale.append(el("span", "lgi", "Paler = off air on fewer of the days"));
+  scale.append(el("span", "lgi", "Paler = music logged on more of the days"));
 
   const list = $("#showList");
   list.replaceChildren();
@@ -1386,7 +1380,7 @@ function renderSilence() {
   });
 
   $("#silenceFoot").textContent = a
-    ? `All of it stopped on ${s.changeover}. Since then the stream has run songs through ` +
+    ? `The grid stopped on ${s.changeover}. Since then the stream has run songs through ` +
       `all 24 hours, seven days a week — ${fmtInt(a.plays_per_day)} plays a day against ` +
       `${fmtInt(b.plays_per_day)} before. Whether the shows ended or simply stopped being ` +
       `carried on this stream, the log cannot say; the station stopped publishing the ` +
@@ -1394,39 +1388,34 @@ function renderSilence() {
     : `The grid is still in force.`;
 
   methodology($("#methSilence"), [
-    ["What an empty hour actually means",
-     `The logger records a track change and nothing else. It cannot see talk, adverts, ` +
-     `station idents or dead air — during any of those the stream simply stops announcing ` +
-     `anything new, and an hour goes by with no rows. So these cells mean "no song ` +
-     `started", not "no sound". A live show is exactly the sort of thing that looks like ` +
-     `this.`],
-    ["How the shows were matched",
-     `The blocks were found first, from the log alone, with no schedule involved: group ` +
-     `every hour by Central-time slot and weekday, and count how often it logged music. ` +
-     `Only then were they compared against the station's published programming page. ` +
-     `Every one of its three live shows is a block, including the detail that the morning ` +
-     `show runs two hours on weekdays and one at weekends — which the log shows on its ` +
-     `own. ${fmtInt(m.show_hours_off)} of ${fmtInt(m.show_hours_total)} published show ` +
-     `hours logged no music against ${fmtInt(m.other_hours_off)} of ` +
-     `${fmtInt(m.other_hours_total)} other hours.`],
-    ["Why this is programming and not a broken logger",
-     `Failure does not keep office hours. These blocks open on the hour, close on the hour, ` +
-     `hold the same Central-time slots across every daylight-saving change in the log, and ` +
-     `treat weekends differently from weekdays. The ${fmtInt(META.coverage.n_outages)} real ` +
-     `outages look nothing like it: they fall at no particular time of day, and most of ` +
-     `them last more than a day.`],
+    ["Where the slots come from",
+     `The station's own published programming page, not from this log. It gives three live ` +
+     `shows on fixed Central-time slots, including the detail that the morning show runs ` +
+     `two hours on weekdays and one at weekends. The grid draws those slots in each show's ` +
+     `colour.`],
+    ["How the log lines up with them",
+     `The music log holds no songs inside the show hours and is busy outside them: ` +
+     `${fmtInt(m.show_hours_off)} of ${fmtInt(m.show_hours_total)} published show hours ` +
+     `carry no music, against ${fmtInt(m.other_hours_off)} of ` +
+     `${fmtInt(m.other_hours_total)} other hours. The alignment holds on the hour, across ` +
+     `every daylight-saving change in the log, and keeps the weekday/weekend split.`],
+    ["Not to be confused with logger downtime",
+     `The ${fmtInt(META.coverage.n_outages)} real outages look nothing like this grid: they ` +
+     `fall at no particular time of day, and most of them last more than a day. The two are ` +
+     `counted separately throughout the site.`],
     ["Which hours and days count",
-     `An hour counts as off air if it logged at most two track changes — not zero, because ` +
-     `a song starting just before the top of the hour still lands one row inside it. The ` +
-     `split is not a close call: inside a show slot an hour logs nought to three changes or ` +
-     `it logs twelve and up, with nothing in between. Days the logger missed any part of ` +
+     `An hour counts as carrying no music if it logged at most two track changes — not zero, ` +
+     `because a song starting just before the top of the hour still lands one row inside it. ` +
+     `The split is not a close call: inside a show slot an hour logs nought to three changes ` +
+     `or it logs twelve and up, with nothing in between. Days the logger missed any part of ` +
      `are dropped, along with the first and last day of the log. That leaves ` +
      `${fmtInt(b.days)} clean days before the change and ${a ? fmtInt(a.days) : 0} after.`],
     ["What it still can't tell you",
-     `Nothing about what was said, and nothing about the music blocks the same schedule ` +
-     `lists — including the 8–10a Sensory Hours, which report track changes exactly like ` +
-     `any other hour and so leave no trace here at all. If stores lower or mute their own ` +
-     `speakers, one shared stream looks identical either way, and this log cannot see it.`],
+     `Nothing about what was said or played during the shows, and nothing about the music ` +
+     `blocks the same schedule lists — including the 8–10a Sensory Hours, which report track ` +
+     `changes exactly like any other hour and so leave no trace here at all. If stores lower ` +
+     `or mute their own speakers, one shared stream looks identical either way, and this log ` +
+     `cannot see it.`],
   ]);
 }
 const SHOW_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
@@ -1688,18 +1677,18 @@ function renderDataSection() {
     stats.append(d);
   }
 
-  // The honest version of the coverage number. Most of the missing time is the
-  // station's own schedule, not the logger failing, and saying otherwise would
-  // misdescribe the dataset.
+  // The honest version of the coverage number. Most of the missing time lines up
+  // with the live-show grid rather than the logger failing, and saying otherwise
+  // would misdescribe the dataset.
   const sil = META.silence;
   methodology($("#coverageNote"), [
     ["How coverage is measured",
      `The share of clock hours between the first and last play that contain at least one ` +
      `logged track change. ${fmtInt(c.covered_hours)} of ${fmtInt(c.span_hours)} hours qualify.`],
     ["Where the rest of the time went",
-     `Mostly nowhere — the station was not playing songs. There are ${fmtInt(c.n_quiet)} short ` +
-     `silences totalling about ${fmtInt(c.quiet_hours)} hours, and most of them land in the ` +
-     `same Central-time slots every day: the programme grid` +
+     `Mostly the live-show grid. There are ${fmtInt(c.n_quiet)} short stretches with no ` +
+     `music totalling about ${fmtInt(c.quiet_hours)} hours, and most of them land in the ` +
+     `same Central-time slots every day: the three live shows` +
      (sil && sil.changeover ? `, which ran until ${sil.changeover}` : "") + `. ` +
      `Real downtime is the other kind, and it does not look like that: ${fmtInt(c.n_outages)} ` +
      `outages totalling ${fmtInt(c.outage_hours)} hours, the longest ` +
@@ -1710,8 +1699,8 @@ function renderDataSection() {
      `schedule, occasionally ours — check anything that compares two periods against the ` +
      `outage list below` +
      (sil && sil.changeover
-       ? `, and bear in mind the grid lifted on ${sil.changeover}, so hours that were dead ` +
-         `for the first two years are full of music now`
+       ? `, and bear in mind the grid lifted on ${sil.changeover}, so hours that carried no ` +
+         `music for the first two years are full of it now`
        : "") + `.`],
   ]);
 
@@ -1735,8 +1724,8 @@ function renderFooter() {
   $("#footGaps").textContent =
     `Data completeness: ${g.length} recording gaps (logger downtime): ${g.join(" · ")}. ` +
     (s && s.changeover
-      ? `Shorter silences are the station's own doing, not ours — until ${s.changeover} the ` +
-        `stream ran a fixed grid of quiet hours. `
+      ? `Shorter stretches with no music are not logger downtime — until ${s.changeover} the ` +
+        `station ran a fixed daily grid of live shows. `
       : "") +
     `The weeks before Christmas skew heavily to holiday music.`;
 }
