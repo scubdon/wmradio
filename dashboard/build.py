@@ -20,13 +20,15 @@ Also copies the 150px artwork thumbs used by the site into site/artwork/.
 Run after scripts/update_duckdb.py. Pure read of the DB.
 """
 import json
+import random
 import shutil
 import sys
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from math import sqrt
 from pathlib import Path
+from statistics import median, pstdev
 from zoneinfo import ZoneInfo
 
 import duckdb
@@ -93,6 +95,31 @@ NIGHT_HOURS = set([23, 0, 1, 2, 3, 4, 5])
 SKEW_WINDOW_DAYS = 56
 SKEW_MIN_PLAYS = 10
 
+# --- recurrence -------------------------------------------------------------
+# How long the station waits before playing a song again. A play count says how
+# much a track is worth to the station; the interval says how the scheduler is
+# built, which is the question the rest of the site can't reach.
+RECUR_MIN_PLAYS = 4       # plays in the window before a median interval means anything
+RECUR_CV_MIN_PLAYS = 8    # and before the spacing test is worth running
+# Bands on the median interval. Deliberately phrased as a listener would
+# experience them, like TIERS, rather than as bucket edges.
+RECUR_BANDS = [
+    (0, 28, "About once a day", "you would hear it on most shifts"),
+    (28, 56, "Every day or two", "familiar, but not every visit"),
+    (56, 120, "A couple of times a week", "you would have to be in a lot"),
+    (120, 10**9, "Weekly at most", "the deep end of the pool"),
+]
+# Histogram edges in hours, chosen so the floor below is legible: the interesting
+# structure is all under three days, and the tail past that is one bucket.
+RECUR_BINS = [0, 4, 8, 12, 16, 20, 24, 30, 36, 48, 72, 120, 168, 10**9]
+# The spacing null: plays dropped at random in the window, subject only to the
+# station's own observed minimum separation. Sampled exactly rather than by
+# rejection — n points in [0, W] no closer than f apart is n uniform points in
+# [0, W − (n−1)f] with i·f added back to the i-th. Rejection sampling would
+# have silently dropped every high-rotation song (the ones that can barely fit),
+# which is the half of the catalogue the question is about.
+RECUR_SEED = 7
+
 # Play tiers, by plays in the 28-day window. (label, min_plays, blurb)
 TIERS = [
     ("Heavy", 28, "at least once a day"),
@@ -105,6 +132,11 @@ TIERS = [
 
 def ct_hour(ts_utc: datetime) -> int:
     return ts_utc.replace(tzinfo=timezone.utc).astimezone(CT).hour
+
+
+def epoch_min(ts_utc: datetime) -> int:
+    """Naive-UTC timestamp to epoch minute, the unit the play sequence uses."""
+    return int(ts_utc.replace(tzinfo=timezone.utc).timestamp()) // 60
 
 
 def build_rotation(cur_rows, prev_counts, skew_rows, spans):
@@ -219,6 +251,146 @@ def build_rotation(cur_rows, prev_counts, skew_rows, spans):
     }
 
 
+def build_recurrence(seq):
+    """
+    How long the station waits before coming back to a song.
+
+    A play count tells you what the station likes. The *interval* tells you how
+    the scheduler is built, and it answers a question nothing else on the page
+    reaches: does the station work to a rotation clock, or draw from a weighted
+    pool? The log says the second, with one hard rule on top.
+
+    **The rule is a floor.** Almost nothing repeats inside a day. Look at the
+    histogram and there is a wall: the bins below it are empty, not thin.
+
+    **Above the floor there is no clock.** Each song is matched against its own
+    null — same play count, same window, times drawn at random subject to the
+    same floor — and the real gaps are no more even than the random ones. About
+    half the catalogue beats its null, which is what chance gives. So the answer
+    is a shuffle with a cooling-off period, not a schedule.
+
+    This function is deliberately capable of overturning that: if the station
+    ever does start working to a clock, `cv_obs` drops away from `cv_null` and
+    `cv_steadier` climbs past half, with no code change. The site's copy reads
+    the comparison rather than asserting the conclusion.
+
+    seq: (epoch_minute, song_id) ascending, restricted to the window.
+    """
+    by_song = {}
+    for m, sid in seq:
+        by_song.setdefault(sid, []).append(m)
+
+    gaps_of = {sid: [b - a for a, b in zip(ms, ms[1:])]
+               for sid, ms in by_song.items() if len(ms) >= RECUR_MIN_PLAYS}
+    if not gaps_of:
+        return None
+    all_gaps = sorted(g for gs in gaps_of.values() for g in gs)
+
+    def pct(f):
+        return all_gaps[min(len(all_gaps) - 1, int(len(all_gaps) * f))]
+
+    hist = []
+    for lo, hi in zip(RECUR_BINS, RECUR_BINS[1:]):
+        n = (bisect_left(all_gaps, hi * 60) - bisect_left(all_gaps, lo * 60))
+        hist.append([lo, hi if hi < 10**8 else None, n])
+
+    # --- per-song intervals ----------------------------------------------
+    per_song = []
+    for sid, gs in gaps_of.items():
+        gs = sorted(gs)
+        q = lambda f: gs[min(len(gs) - 1, int(len(gs) * f))]
+        per_song.append([sid, round(median(gs)), q(0.25), q(0.75),
+                         gs[0], gs[-1], len(by_song[sid])])
+    per_song.sort(key=lambda r: r[1])
+
+    bands = []
+    for lo, hi, label, blurb in RECUR_BANDS:
+        members = [r for r in per_song if lo * 60 <= r[1] < hi * 60]
+        bands.append({
+            "label": label, "blurb": blurb, "from_h": lo,
+            "to_h": hi if hi < 10**8 else None,
+            "songs": len(members),
+            "top": [[r[0], r[1], r[2], r[3], r[6]] for r in members[:40]],
+        })
+
+    # --- is it a clock, or a shuffle with a cooling-off period? -----------
+    # Each song is matched against its *own* null: same play count, same window,
+    # times drawn at random subject to the floor. If the station were working to
+    # a rotation clock, real gaps would be markedly more even than that. They
+    # are not — which is the finding, and it is the reason this is computed
+    # rather than asserted.
+    #
+    # The floor granted to the null is p1, not p5: the loosest reading of the
+    # station's rule, which makes the null as ragged as the data allows and so
+    # gives any real regularity the best possible chance of showing up.
+    floor = pct(0.01)
+    rng = random.Random(RECUR_SEED)
+    window = max(m for m, _ in seq) - min(m for m, _ in seq)
+    obs_cv, null_cv, steadier = [], [], 0
+    for sid, gs in gaps_of.items():
+        n = len(by_song[sid])
+        if n < RECUR_CV_MIN_PLAYS:
+            continue
+        room = window - (n - 1) * floor
+        mean = sum(gs) / len(gs)
+        if room <= 0 or not mean:
+            continue        # this song cannot fit its own plays under the floor
+        t = sorted(rng.uniform(0, room) for _ in range(n))
+        t = [x + i * floor for i, x in enumerate(t)]
+        sim = [b - a for a, b in zip(t, t[1:])]
+        m_sim = sum(sim) / len(sim)
+        if not m_sim:
+            continue
+        o, s = pstdev(gs) / mean, pstdev(sim) / m_sim
+        obs_cv.append(o)
+        null_cv.append(s)
+        steadier += o < s
+
+    return {
+        "window_days": ROTATION_WINDOW_DAYS,
+        "min_plays": RECUR_MIN_PLAYS,
+        "cv_min_plays": RECUR_CV_MIN_PLAYS,
+        "n_songs": len(gaps_of),
+        "n_gaps": len(all_gaps),
+        "hist": hist,
+        "p1": floor, "p5": pct(0.05), "p25": pct(0.25), "p50": pct(0.5),
+        "p75": pct(0.75), "p95": pct(0.95),
+        "under_day": bisect_left(all_gaps, 1440),
+        "cv_obs": round(median(obs_cv), 3) if obs_cv else None,
+        "cv_null": round(median(null_cv), 3) if null_cv else None,
+        "cv_n": len(obs_cv),
+        "cv_steadier": steadier,
+        "bands": bands,
+        "fastest": [[r[0], r[1], r[2], r[3], r[6]] for r in per_song[:12]],
+    }
+
+
+def build_changelog(rows, max_ts, weeks=CHANGELOG_WEEKS):
+    """
+    The same pool test as build_rotation, re-run at weekly intervals, so the
+    turnover figure becomes a series instead of a single number: you can see
+    Walmart actually swapping tracks in and out week by week.
+
+    rows: (ts_utc, song_id) covering at least weeks*7 + ROTATION_WINDOW_DAYS days.
+    """
+    ends = [max_ts - timedelta(days=7 * i) for i in range(weeks, -1, -1)]
+    pools = []
+    for end in ends:
+        start = end - timedelta(days=ROTATION_WINDOW_DAYS)
+        c = Counter(sid for ts, sid in rows if start <= ts < end)
+        pools.append({sid for sid, n in c.items() if n >= ROTATION_MIN_PLAYS})
+
+    out = []
+    for i in range(1, len(pools)):
+        out.append([
+            ends[i].date().isoformat(),
+            len(pools[i] - pools[i - 1]),
+            len(pools[i - 1] - pools[i]),
+            len(pools[i]),
+        ])
+    return out
+
+
 def outage_spans(plays_min):
     """
     Stretches the logger was demonstrably not listening, read off the play
@@ -264,6 +436,101 @@ def build_coverage(plays_min, down, first_day, last_day, n_gap_days):
         "csv_bytes": (DATA_OUT / "plays.csv").stat().st_size,
         "parquet_bytes": (DATA_OUT / "plays.parquet").stat().st_size,
     }
+
+
+def write_data_readme(meta):
+    """
+    A plain-text data dictionary that travels with the download.
+
+    The site explains all of this, but a CSV that has been passed on twice has
+    left the site behind, and the caveats are the part you cannot reconstruct
+    from the file: which silences are ours and which are the station's, what
+    song identity means, and what the strings have *not* been normalised
+    against. Generated every build so the figures cannot drift from the data.
+    """
+    c, sil = meta["coverage"], meta["silence"]
+    gaps = "\n".join(f"  {a}  to  {b}" for a, b in meta["gaps"]) or "  (none)"
+    grid = (f"""
+Until {sil['changeover']} the station ran a fixed daily grid of quiet hours —
+about {sil['before']['silent_hours_per_day']} hours out of every 24, always the same
+Central-time slots. Those are the station's three live talk shows, and the
+stream reports no track changes during them. Since {sil['changeover']} it has run
+music through all 24 hours. If you compare two periods either side of that
+date, you are comparing two different stations.
+""" if sil and sil.get("changeover") and sil.get("before") else "")
+
+    (DATA_OUT / "README.txt").write_text(f"""\
+Walmart Radio play log
+======================
+
+Every song observed on the public in-store Walmart Radio stream, logged by
+polling its metadata endpoint once a minute and recording each track change.
+
+  Coverage    {meta['first_day']} to {meta['last_day']} ({c['span_days']:,} days)
+  Rows        {c['rows']:,} plays
+  Songs       {meta['n_songs']:,} titles by {meta['n_artists']:,} artists
+  Built       {meta['generated_at']}
+
+Files
+-----
+  plays.csv       one row per play, UTF-8, one header row
+  plays.parquet   the same rows, zstd-compressed, typed
+  README.txt      this file
+
+Columns
+-------
+  played_at_utc   Time the track change was observed. UTC, second precision.
+                  CSV: ISO 8601 with an explicit Z (2026-08-13T12:34:56Z).
+                  Parquet: a UTC-aware timestamp.
+  artist          Artist string exactly as the stream reported it.
+  song            Title as reported, including any "(Feat. ...)" or remix credit.
+
+Song identity is the (artist, song) pair. Nothing is normalised or resolved
+against MusicBrainz or any other authority, so the same recording can appear
+under more than one string if the station's own metadata varies. Punctuation,
+capitalisation and featured-artist credits are reproduced, not cleaned.
+
+The timestamp is when the change was *observed*, within about a minute of when
+it happened. It is not the track's start time as the station would report it,
+and there is no duration column — the gap to the next row is the closest thing,
+and it is wrong wherever a silence intervenes.
+
+What is missing, and why it matters
+-----------------------------------
+Play counts are lower bounds. {pct_str(c['uptime'])} of the clock hours in the span contain
+at least one logged play. The rest splits into two kinds of silence, and they
+are not the same thing:
+
+  Logger downtime   {c['n_outages']} outages, {c['outage_hours']:,} hours in total, longest {c['longest_outage_hours']} hours.
+                    This is us failing, and it is listed in full below.
+  Station silence   {c['n_quiet']:,} shorter quiet blocks, about {c['quiet_hours']:,} hours. This is
+                    the station not playing songs, and it is a schedule.
+{grid}
+Do not bundle the two into one "downtime" figure; roughly a third of the span
+is silence, and most of it is the station's, not the logger's.
+
+Logger outages
+--------------
+Whole days with no plays at all. Partial-day outages exist too and are not
+listed here; if precision matters, read gaps of six hours or more off the play
+sequence itself.
+
+{gaps}
+
+Provenance and reuse
+--------------------
+An independent, non-commercial record of a public broadcast. Not affiliated
+with, sponsored by, or endorsed by Walmart. The log is factual observation —
+use it for whatever you like; a link back is appreciated.
+
+  Site        https://scubdon.github.io/wmradio/
+  Source      https://github.com/scubdon/wmradio
+  Corrections https://github.com/scubdon/wmradio/issues
+""")
+
+
+def pct_str(f):
+    return f"{round(f * 100)}%"
 
 
 DOW_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -461,7 +728,7 @@ def build_silence(con, down):
     }
 
 
-def build_records(con, seq, songs, songs_index, pool_ids, down):
+def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur):
     """
     Records & oddities — the "how is that even possible" facts a 224k-play log
     contains and a chart doesn't show. Everything here is one query or one pass;
@@ -660,6 +927,25 @@ def build_records(con, seq, songs, songs_index, pool_ids, down):
                        f"{round((b - a) / 60)} hours straight without a single track "
                        f"coming back, ending {fmt_day(b)}"))
 
+    # The same window over artists rather than songs — the harder record, since
+    # a station with 40 Fleetwood Mac tracks can dodge a song repeat for far
+    # longer than it can dodge an artist repeat.
+    artist_of = [a for a, _, _, _ in songs]
+    last_at, start, best_art = {}, 0, (0, 0, 0)
+    for i, (m, sid) in enumerate(seq):
+        a = artist_of[sid]
+        if last_at.get(a, -1) >= start:
+            start = last_at[a] + 1
+        last_at[a] = i
+        if i - start + 1 > best_art[0]:
+            best_art = (i - start + 1, seq[start][0], m)
+    if best_art[0] > 1:
+        n, a, b = best_art
+        out.append(rec("noartist", "Longest run without repeating an artist",
+                       f"{n} songs",
+                       f"{round((b - a) / 60)} hours in which no act got a second "
+                       f"look-in, ending {fmt_day(b)}"))
+
     # --- station-level extremes -------------------------------------------
     d = con.execute("""
         SELECT date_local::VARCHAR, count(*) n, count(DISTINCT song) k
@@ -668,6 +954,29 @@ def build_records(con, seq, songs, songs_index, pool_ids, down):
     out.append(rec("busiest", "Busiest day the station has had", f"{d[1]} plays",
                    f"{d[0]} — {d[2]} different songs, one every "
                    f"{round(1440 / d[1] * 10) / 10:g} minutes"))
+
+    d = con.execute("""
+        SELECT date_local::VARCHAR, count(DISTINCT song) k, count(*) n
+        FROM plays GROUP BY 1 ORDER BY k DESC LIMIT 1
+    """).fetchone()
+    out.append(rec("widest_day", "Most different songs in one day", f"{d[1]} songs",
+                   f"{d[0]} — {d[2]} plays, and only "
+                   f"{d[2] - d[1]} of them a repeat"))
+
+    # The opposite extreme, and the one that catches the holiday run: a full
+    # day's plays drawn from as few titles as possible. Restricted to days with
+    # a normal quantity of music, or a half-logged day would win it on nothing.
+    d = con.execute("""
+        WITH d AS (SELECT date_local dt, count(DISTINCT song) k, count(*) n
+                   FROM plays GROUP BY 1 HAVING count(*) >= 250)
+        SELECT dt::VARCHAR, k, n, (SELECT median(n::DOUBLE / k) FROM d)
+        FROM d ORDER BY k::DOUBLE / n LIMIT 1
+    """).fetchone()
+    if d:
+        out.append(rec("narrowest_day", "Least varied day the station has had",
+                       f"{d[1]} songs, {d[2]} plays",
+                       f"{d[0]} — every title came round {round(d[2] / d[1], 1)} times "
+                       f"that day, against {round(d[3], 1)} on a typical one"))
 
     # First heard *since* the opening weeks, which are all debuts by definition.
     d = con.execute("""
@@ -743,6 +1052,32 @@ def build_records(con, seq, songs, songs_index, pool_ids, down):
                        f"the first of {k} holiday-only songs to surface in {year}, "
                        f"{(date(year, 12, 25) - d0).days} days out. "
                        f"{n:,} holiday plays followed before the year was over."))
+
+    # --- the biggest week of playlist churn -------------------------------
+    if changelog:
+        wk = max(changelog, key=lambda r: r[1] + r[2])
+        out.append(rec("turnover", "Biggest week of playlist turnover",
+                       f"{wk[1] + wk[2]} songs",
+                       f"in the week to {wk[0]}, {wk[1]} entered rotation and {wk[2]} left "
+                       f"— against a pool of {wk[3]:,}"))
+
+    # --- the song that keeps the best time ---------------------------------
+    # Straight out of the recurrence analysis: of everything in rotation, the
+    # track whose gaps vary least. This is the scheduler at its most visible.
+    if recur and recur["fastest"]:
+        best = None
+        for sid, med, q1, q3, n in (r for band in recur["bands"] for r in band["top"]):
+            spread = (q3 - q1) / max(1, med)
+            if n >= RECUR_CV_MIN_PLAYS and (best is None or spread < best[0]):
+                best = (spread, sid, med, q1, q3, n)
+        if best:
+            _, sid, med, q1, q3, n = best
+            hrs = lambda m: f"{m / 60:.1f}h"
+            out.append(rec("metronome", "The song that keeps the best time",
+                           f"every {hrs(med)}",
+                           f"{songs[sid][1]} — {songs[sid][0]}, {n} plays in the last "
+                           f"{ROTATION_WINDOW_DAYS} days and half of its waits between "
+                           f"{hrs(q1)} and {hrs(q3)}", sid=sid))
 
     return out
 
@@ -848,15 +1183,23 @@ def main():
                min(date_local)::VARCHAR, max(date_local)::VARCHAR FROM plays
     """).fetchone()
 
-    # --- public download files (times are naive UTC, like the DB) ---
+    # --- public download files -------------------------------------------
     # Written before meta.json so the coverage panel can quote real file sizes.
+    #
+    # Timestamps go out **timezone-aware**, which is not what the DB holds:
+    # `ts_utc` is naive, and a downloader has no way to know that from the file
+    # itself. The CSV is formatted as ISO 8601 with an explicit `Z`, and the
+    # Parquet column is a real UTC-aware timestamp (`AT TIME ZONE 'UTC'` reads
+    # the naive value *as* UTC, so this is a relabelling, not a shift).
     con.execute(f"""
-        COPY (SELECT date_trunc('second', ts_utc) AS played_at_utc, artist, song
+        COPY (SELECT strftime(date_trunc('second', ts_utc), '%Y-%m-%dT%H:%M:%SZ')
+                       AS played_at_utc, artist, song
               FROM plays ORDER BY ts_utc)
         TO '{DATA_OUT / "plays.csv"}' (HEADER, DELIMITER ',')
     """)
     con.execute(f"""
-        COPY (SELECT date_trunc('second', ts_utc) AS played_at_utc, artist, song
+        COPY (SELECT date_trunc('second', ts_utc) AT TIME ZONE 'UTC' AS played_at_utc,
+                     artist, song
               FROM plays ORDER BY ts_utc)
         TO '{DATA_OUT / "plays.parquet"}' (FORMAT PARQUET, COMPRESSION ZSTD)
     """)
@@ -866,8 +1209,11 @@ def main():
     down = outage_spans(play_min)
     pool_ids = {sid for sid, n in Counter(songs_index[(a, s)] for _, a, s in rot_rows
                                           ).items() if n >= ROTATION_MIN_PLAYS}
-    records = build_records(con, list(zip(play_min, sids)), songs_out, songs_index,
-                            pool_ids, down)
+    seq = list(zip(play_min, sids))
+    recurrence = build_recurrence(
+        [(epoch_min(ts), songs_index[(a, s)]) for ts, a, s in rot_rows])
+    records = build_records(con, seq, songs_out, songs_index,
+                            pool_ids, down, changelog, recurrence)
     blank_days = sum((date.fromisoformat(b) - date.fromisoformat(a)).days + 1
                      for a, b in gaps)
     coverage = build_coverage(play_min, down, first_day, last_day, blank_days)
@@ -885,11 +1231,14 @@ def main():
         "weekly_debuts": [[w, n] for w, n in debuts],
         "trends": [[mo, p, d, t, f] for mo, p, d, t, f in trends],
         "rotation": rotation,
+        "recurrence": recurrence,
+        "changelog": changelog,
         "records": records,
         "coverage": coverage,
         "silence": silence,
     }
 
+    write_data_readme(meta)
     (DATA_OUT / "songs.json").write_text(json.dumps(songs_out, separators=(",", ":")))
     (DATA_OUT / "plays.json").write_text(
         json.dumps({"t0": int(t0), "dt": dts, "s": sids}, separators=(",", ":")))
@@ -925,6 +1274,16 @@ def main():
           f"{coverage['span_days']} days · {coverage['n_outages']} outages "
           f"({coverage['outage_hours']}h, longest {coverage['longest_outage_hours']}h) · "
           f"{coverage['n_quiet']} short quiet blocks ({coverage['quiet_hours']}h)")
+    print(f"changelog: {len(changelog)} weeks · records: {len(records)}")
+    if recurrence:
+        r = recurrence
+        h = lambda m: f"{m / 60:.1f}h"
+        print(f"recurrence: {r['n_gaps']:,} repeat gaps over {r['n_songs']} songs · "
+              f"p5 {h(r['p5'])} · median {h(r['p50'])} · p95 {h(r['p95'])}")
+        print(f"  spacing: observed CV {r['cv_obs']} vs {r['cv_null']} for a random draw "
+              f"respecting the same {h(r['p1'])} floor — {r['cv_steadier']}/{r['cv_n']} songs "
+              f"steadier than their own null (half = no clock)")
+        print("  bands: " + " · ".join(f"{b['label']} {b['songs']}" for b in r["bands"]))
     print(f"records: {len(records)}")
     if silence:
         b, a = silence["before"], silence["after"]

@@ -23,6 +23,7 @@ let ARTISTS = new Map();    // artist -> {ids:[], total, rank}
 let ARTIST_RANK = [];       // artist names, most-played first
 let rangeDays = 30;         // top-section scope
 let topLimit = 15;
+let turnoverBack = 30;      // how far back the turnover panel compares against
 
 // Per-song derived stats, filled once at boot (see computeSongStats). Anything
 // that only needs a single pass over the log is computed here rather than
@@ -50,6 +51,77 @@ const keyDayFmt = new Intl.DateTimeFormat(undefined,
   { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const keyMonthFmt = new Intl.DateTimeFormat(undefined,
   { month: "short", year: "2-digit", timeZone: "UTC" });
+
+// ---------- shareable state ----------
+// Every filter on the page lives in the query string, so "look at the weird
+// playlist we get on overnight shift" is a link rather than a set of
+// instructions. The hash is left to the song/artist router, which owns it.
+//
+// Writes are replaceState, not pushState: these are dials, not pages, and a
+// history entry per chip click would bury the Back button. Song and artist
+// pages still push history, because those *are* pages.
+const URLSTATE = {
+  range: { get: () => rangeDays, set: v => { rangeDays = +v; }, def: 30 },
+  shift: {
+    get: () => `${wrapState.from}-${wrapState.to}`,
+    set: v => {
+      const [f, t] = v.split("-").map(Number);
+      if (f >= 0 && f < 48 && t >= 0 && t < 48) { wrapState.from = f; wrapState.to = t; }
+    },
+    def: "18-34",
+  },
+  days: {
+    get: () => [...wrapState.days].sort().join(""),
+    set: v => { wrapState.days = new Set([...v].map(Number).filter(d => d >= 0 && d < 7)); },
+    def: "01234",
+  },
+  over: { get: () => wrapState.range, set: v => { wrapState.range = +v; }, def: 365 },
+  back: { get: () => turnoverBack, set: v => { turnoverBack = +v; }, def: 30 },
+  // The day view defaults to the last logged day, so only a date the reader
+  // actually navigated to is worth putting in the URL.
+  date: {
+    get: () => {
+      const p = $("#dayPick");
+      return p && p.value !== p.max ? p.value : "";
+    },
+    set: v => { pendingDate = v; },
+    def: "",
+  },
+  q: { get: () => browseQ, set: v => { browseQ = v.toLowerCase(); }, def: "" },
+  status: { get: () => browseStatus, set: v => { browseStatus = v; }, def: "all" },
+  sort: {
+    get: () => `${browseMode === "artists" ? "a" : "s"}:${browseSort}:${browseDesc ? "d" : "a"}`,
+    set: v => {
+      const [mode, key, dir] = v.split(":");
+      browseMode = mode === "a" ? "artists" : "songs";
+      if (key) browseSort = key;
+      browseDesc = dir !== "a";
+    },
+    def: "s:n:d",
+  },
+};
+let pendingDate = null;      // a ?date= seen at boot, applied once the day view exists
+let restoring = false;       // suppresses URL writes while applying an incoming URL
+
+function readURL() {
+  const p = new URLSearchParams(location.search);
+  restoring = true;
+  for (const [key, slot] of Object.entries(URLSTATE)) {
+    const v = p.get(key);
+    if (v != null && v !== "") { try { slot.set(v); } catch { /* ignore junk */ } }
+  }
+  restoring = false;
+}
+function writeURL() {
+  if (restoring) return;
+  const p = new URLSearchParams();
+  for (const [key, slot] of Object.entries(URLSTATE)) {
+    const v = slot.get();
+    if (v != null && v !== "" && String(v) !== String(slot.def)) p.set(key, v);
+  }
+  const qs = p.toString();
+  history.replaceState(null, "", (qs ? "?" + qs : location.pathname) + location.hash);
+}
 
 // ---------- boot ----------
 (async function boot() {
@@ -82,6 +154,7 @@ const keyMonthFmt = new Intl.DateTimeFormat(undefined,
   ARTIST_RANK.forEach((name, i) => { ARTISTS.get(name).rank = i + 1; });
 
   computeSongStats();
+  readURL();          // before anything renders, so the page comes up shared-state
 
   renderStatLine();
   renderFindings();
@@ -92,11 +165,14 @@ const keyMonthFmt = new Intl.DateTimeFormat(undefined,
   initWrapped();
   initDayView();
   renderRotation();
+  renderRecurrence();
+  initTurnover();
   renderSilence();
   renderRecords();
   initBrowse();
   renderDataSection();
   renderFooter();
+  writeURL();
   document.addEventListener("click", onGlobalClick);
   window.addEventListener("hashchange", route);
   route();
@@ -202,6 +278,11 @@ function renderFindings() {
     [pct(locked), "of songs are day-only or night-only", "#dnSub"],
     [pct(lastMonth[3]), "of airtime came from 50 songs last month", "#tierRows"],
   ];
+  const rec = META.recurrence;
+  if (rec && rec.p1)
+    items.splice(2, 0, [`${Math.round(rec.p1 / 60)} hours`,
+      "is the shortest the station will wait before playing a song again — its one hard rule",
+      "#recurWrap"]);
   const sil = META.silence;
   if (sil && sil.shows) {
     const m = sil.shows.match;
@@ -251,14 +332,21 @@ function agoLabel(ms) {
 }
 
 // ---------- top lists + heatmap (scoped by range chips) ----------
+// Marks the chip matching the current value and clears the rest. Called on
+// every click and once at boot, so a restored URL lights up the right chip.
+function syncChips(root, attr, value) {
+  for (const c of root.querySelectorAll(".chip"))
+    c.setAttribute("aria-pressed", String(c.dataset[attr] === String(value)));
+}
 function initRangeFilters() {
+  syncChips($("#rangeFilters"), "days", rangeDays);
   $("#rangeFilters").addEventListener("click", e => {
     const btn = e.target.closest(".chip"); if (!btn) return;
-    for (const c of $("#rangeFilters").children) c.setAttribute?.("aria-pressed", "false");
-    btn.setAttribute("aria-pressed", "true");
     rangeDays = +btn.dataset.days;
+    syncChips($("#rangeFilters"), "days", rangeDays);
     topLimit = 15;
     renderTopSection();
+    writeURL();
   });
   for (const btn of [$("#moreSongs"), $("#moreArtists")])
     btn.addEventListener("click", () => { topLimit += 50; renderTopSection(); });
@@ -436,6 +524,7 @@ function initWrapped() {
       wrapState.days.has(i) ? wrapState.days.delete(i) : wrapState.days.add(i);
       b.setAttribute("aria-pressed", wrapState.days.has(i));
       renderWrapped();
+      writeURL();
     });
     btns.append(b);
   });
@@ -444,9 +533,12 @@ function initWrapped() {
     from.append(new Option(slotLabel(s), s, s === wrapState.from, s === wrapState.from));
     to.append(new Option(slotLabel(s), s, s === wrapState.to, s === wrapState.to));
   }
-  from.addEventListener("change", () => { wrapState.from = +from.value; renderWrapped(); });
-  to.addEventListener("change", () => { wrapState.to = +to.value; renderWrapped(); });
-  $("#wrapRange").addEventListener("change", e => { wrapState.range = +e.target.value; renderWrapped(); });
+  $("#wrapRange").value = String(wrapState.range);
+  from.addEventListener("change", () => { wrapState.from = +from.value; renderWrapped(); writeURL(); });
+  to.addEventListener("change", () => { wrapState.to = +to.value; renderWrapped(); writeURL(); });
+  $("#wrapRange").addEventListener("change", e => {
+    wrapState.range = +e.target.value; renderWrapped(); writeURL();
+  });
   renderWrapped();
 }
 function renderWrapped() {
@@ -493,6 +585,97 @@ function renderWrapped() {
 
   renderWrapShows();
   renderWrapSkew(counts, total, start);
+  renderWrapVersus(counts, total, start);
+}
+
+// Counts alone don't land — "you heard Flowers 212 times" is a number, but
+// "your hours get it 2.7× more than everyone else's" is a fact about your
+// shift. Same for the inverse: the hit the whole country knows that your shift
+// somehow never met.
+function renderWrapVersus(counts, total, start) {
+  const root = $("#wrapVersus");
+  root.replaceChildren();
+  if (!total) return;
+
+  const rest = new Map();
+  let restTotal = 0;
+  for (let i = start; i < N; i++) {
+    const sid = SID[i];
+    if (inShift(LSLOT[i], LDOW[i])) continue;
+    rest.set(sid, (rest.get(sid) || 0) + 1);
+    restTotal++;
+  }
+  if (!restTotal) return;
+
+  const card = (kind, eyebrow, sid, big, note) => {
+    const c = el("button", "card vs " + kind);
+    c.dataset.sid = sid;
+    c.append(el("div", "vseyebrow", eyebrow));
+    const row = el("div", "vsrow");
+    row.append(coverNode(SONGS[sid][2], SONGS[sid][1]));
+    const t = el("div");
+    t.append(el("div", "vstitle", SONGS[sid][1]), el("div", "vsartist", SONGS[sid][0]));
+    row.append(t);
+    c.append(row, el("div", "vsbig", big), el("div", "vsnote", note));
+    return c;
+  };
+
+  // Theme song: biggest over-representation on your hours, with enough plays
+  // behind it that the ratio isn't noise.
+  let theme = null;
+  for (const [sid, n] of counts) {
+    if (n < 8) continue;
+    const theirs = (rest.get(sid) || 0) / restTotal;
+    if (theirs <= 0) continue;
+    const ratio = (n / total) / theirs;
+    if (!theme || ratio > theme.ratio) theme = { sid, n, ratio };
+  }
+  if (theme)
+    root.append(card("up", "Your shift's theme song", theme.sid,
+      `${theme.ratio.toFixed(1)}× more often`,
+      `${fmtInt(theme.n)} plays on your hours. The rest of the week hears it a fraction ` +
+      `as much — this one is yours.`));
+
+  // The one you escaped: heavily played overall, hardly ever on your hours.
+  // Ranked on how many plays you missed, so it is a song worth having missed.
+  let escaped = null;
+  for (const [sid, n] of rest) {
+    if (n < 30) continue;
+    const mine = counts.get(sid) || 0;
+    const expected = (n / restTotal) * total;
+    if (mine >= expected * 0.35) continue;
+    const missed = expected - mine;
+    if (!escaped || missed > escaped.missed) escaped = { sid, mine, n, missed };
+  }
+  if (escaped)
+    root.append(card("down", "The song you somehow escaped", escaped.sid,
+      escaped.mine ? `only ${fmtInt(escaped.mine)} on your hours` : "never once on your hours",
+      `${fmtInt(escaped.n)} plays during everyone else's. On your hours you would have ` +
+      `expected about ${fmtInt(Math.round(escaped.mine + escaped.missed))}.`));
+
+  // And the single interpretable answer to "is my Walmart different?" — how
+  // much of the station's own top 100 your hours actually share.
+  const topOf = (map, k) => new Set([...map.entries()]
+    .sort((a, b) => b[1] - a[1]).slice(0, k).map(e => e[0]));
+  const k = 100;
+  const mineTop = topOf(counts, k), restTop = topOf(rest, k);
+  if (mineTop.size >= 20) {
+    let shared = 0;
+    for (const sid of mineTop) if (restTop.has(sid)) shared++;
+    const share = shared / mineTop.size;
+    const d = el("div", "card vs neutral");
+    d.append(el("div", "vseyebrow", "How different is your Walmart?"),
+             el("div", "vsbig", pct(share)),
+             el("div", "vsnote",
+               `of your ${fmtInt(mineTop.size)} most-played songs are also in the top ` +
+               `${fmtInt(restTop.size)} for the rest of the week. ` +
+               (share > 0.8
+                 ? "Mostly the same station, then — your hours are not unusual ones."
+                 : share > 0.6
+                   ? "A clear majority overlaps, but a real slice of your shift is its own thing."
+                   : "Less than two thirds — your hours really are a different station.")));
+    root.append(d);
+  }
 }
 
 // The shows are the one part of a shift nobody has a play count for — the
@@ -636,16 +819,19 @@ function scheduledBreak(from, to) {
 
 function initDayView() {
   const pick = $("#dayPick");
-  pick.value = isoLocal(new Date(T[N - 1]));
   pick.min = isoLocal(new Date(T[0]));
-  pick.max = pick.value;
-  pick.addEventListener("change", renderDayView);
+  pick.max = isoLocal(new Date(T[N - 1]));
+  // A ?date= from a shared link wins, as long as it is a day the log covers.
+  pick.value = pendingDate && pendingDate >= pick.min && pendingDate <= pick.max
+    ? pendingDate : pick.max;
+  pick.addEventListener("change", () => { renderDayView(); writeURL(); });
 
   const step = n => {
     const iso = isoFromKey(dayKeyOf(pick.value) + n);
     if (iso < pick.min || iso > pick.max) return;
     pick.value = iso;
     renderDayView();
+    writeURL();
   };
   $("#dayPrev").addEventListener("click", () => step(-1));
   $("#dayNext").addEventListener("click", () => step(1));
@@ -654,6 +840,7 @@ function initDayView() {
     // outage and looks broken.
     pick.value = isoFromKey(LDAY[Math.floor(Math.random() * N)]);
     renderDayView();
+    writeURL();
   });
   renderDayView();
 }
@@ -688,7 +875,10 @@ function renderDayView() {
   }
 
   const seen = new Map(), artistSeen = new Map();
-  let repeats = 0, quiet = 0, quickest = null;
+  let repeats = 0, quiet = 0, quickest = null, debuts = 0, returns = 0;
+  // Long enough that the song had genuinely gone away, rather than merely not
+  // fitting into the last few days.
+  const COMEBACK_DAYS = 60;
 
   idx.forEach((i, pos) => {
     const sid = SID[i], [artist, song, art] = SONGS[sid];
@@ -716,6 +906,17 @@ function renderDayView() {
       const tag = el("span", "flag" + (back < QUICK_RETURN_MS ? " hot" : ""),
                      `again after ${fmtDur(back)}`);
       meta.append(tag);
+    } else if (S_FIRST[sid] === T[i]) {
+      // The first time this song ever appears in the log. Reading a day in
+      // order is the only place you meet one of these as it happens.
+      debuts++;
+      meta.append(el("span", "flag new", "★ first time ever"));
+    } else if (PREV_SAME[i] >= 0 && T[i] - T[PREV_SAME[i]] >= COMEBACK_DAYS * DAY_MS
+               && !overlapsOutage(T[PREV_SAME[i]], T[i])) {
+      // A genuine comeback, not us having missed the intervening plays.
+      returns++;
+      meta.append(el("span", "flag back",
+        `↩ back after ${Math.round((T[i] - T[PREV_SAME[i]]) / DAY_MS)} days away`));
     } else if (artistSeen.has(artist)) {
       meta.append(el("span", "flag dim", `${artistSeen.get(artist) + 1}${nth(artistSeen.get(artist) + 1)} from ${artist}`));
     }
@@ -732,6 +933,8 @@ function renderDayView() {
     repeats ? `${fmtInt(repeats)} repeats` : "no repeats",
   ];
   if (quickest != null) bits.push(`quickest return ${fmtDur(quickest)}`);
+  if (debuts) bits.push(`${fmtInt(debuts)} heard for the first time`);
+  if (returns) bits.push(`${fmtInt(returns)} back from months away`);
   if (quiet) bits.push(`${quiet} silent stretch${quiet === 1 ? "" : "es"}`);
   $("#daySummary").replaceChildren(el("p", "sub", bits.join(" · ")));
 }
@@ -841,6 +1044,223 @@ function renderRotation() {
      `z-scores would have a standard deviation near 1. It is ${dn.z_sd}. Something is ` +
      `partitioning the catalogue by time of day.`],
   ]);
+}
+
+// ---------- how long before you hear it again ----------
+// The question a play count can't answer: is there a rotation clock, or is the
+// station shuffling? The histogram answers it visually — the empty bins on the
+// left are a rule, and everything to the right of them is a shrug.
+function renderRecurrence() {
+  const r = META.recurrence;
+  if (!r || !r.n_gaps) return;
+  $("#recurCard").hidden = false;
+
+  const hrs = m => m < 1440 ? `${(m / 60).toFixed(1)} hours` : `${(m / 1440).toFixed(1)} days`;
+  const shortH = m => m < 1440 ? `${Math.round(m / 60)}h` : `${(m / 1440).toFixed(1)}d`;
+
+  $("#recurSub").textContent =
+    `Every gap between one play of a song and its next, over the last ${r.window_days} days — ` +
+    `${fmtInt(r.n_gaps)} of them across ${fmtInt(r.n_songs)} songs. The station's one hard rule ` +
+    `is on the left of this chart: almost nothing comes back inside ${shortH(r.p1)}. ` +
+    `Half of all repeats wait ${hrs(r.p50)} or more.`;
+
+  // Bar chart over the published bins. Widths are equal rather than
+  // proportional to the bin: the bins get wider as the tail thins out, and a
+  // true histogram would flatten the very structure this is about.
+  const W = 900, H = 250, left = 46, right = 12, top = 14, bottom = 46;
+  const iw = W - left - right, ih = H - top - bottom;
+  const bins = r.hist;
+  const maxV = Math.max(...bins.map(b => b[2]));
+  const bw = iw / bins.length;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "How long the station waits before repeating a song" });
+
+  for (let i = 0; i <= 4; i++) {
+    const v = Math.round(maxV / 4 * i), y = top + ih - (v / maxV) * ih;
+    svg.append(svgEl("line", { x1: left, x2: W - right, y1: y, y2: y,
+      class: i === 0 ? "axis-line" : "grid-line" }));
+    svg.append(svgText(left - 6, y + 4, fmtInt(v), "end"));
+  }
+
+  bins.forEach(([lo, hi, n], i) => {
+    const x = left + i * bw;
+    if (n) {
+      const bh = Math.max(1.5, (n / maxV) * ih);
+      const rect = svgEl("rect", { x: x + bw * 0.12, y: top + ih - bh,
+        width: bw * 0.76, height: bh, rx: 2,
+        // The bins below the floor are the finding, so they get their own
+        // colour on the rare occasion anything lands in one.
+        fill: hi != null && hi <= r.p1 / 60 ? "var(--series-2)" : "var(--series-1)" });
+      rect.dataset.tip = JSON.stringify({
+        v: `${fmtInt(n)} repeat${n === 1 ? "" : "s"} (${pct(n / r.n_gaps)})`,
+        l: hi == null ? `waited more than ${lo} hours` : `waited ${lo}–${hi} hours` });
+      svg.append(rect);
+    } else {
+      // An empty bin has to be visible, or the wall reads as the chart simply
+      // starting further right.
+      svg.append(svgEl("rect", { x: x + bw * 0.12, y: top + ih - 3,
+        width: bw * 0.76, height: 3, rx: 1.5, fill: "var(--grid)" }));
+    }
+    if (i % 2 === 0)
+      svg.append(svgText(x + bw / 2, H - 28, hi == null ? `${lo}h+` : `${lo}h`, "middle"));
+  });
+
+  // The floor, drawn where it actually falls between the bins.
+  const floorX = (() => {
+    const h = r.p1 / 60;
+    const i = bins.findIndex(([lo, hi]) => hi != null && h >= lo && h < hi);
+    if (i < 0) return null;
+    const [lo, hi] = bins[i];
+    return left + (i + (h - lo) / (hi - lo)) * bw;
+  })();
+  if (floorX != null) {
+    svg.append(svgEl("line", { x1: floorX, x2: floorX, y1: top, y2: top + ih,
+      stroke: "var(--baseline)", "stroke-width": 1.2, "stroke-dasharray": "4 3" }));
+    svg.append(svgText(floorX + 5, top + 12, `${shortH(r.p1)} — nothing repeats sooner`, "start"));
+  }
+  svg.append(svgText(left, H - 8, "time until the same song plays again", "start"));
+  $("#recurWrap").replaceChildren(svg);
+  attachCellTips(svg, $("#recurWrap"));
+
+  // The conclusion is read off the comparison rather than asserted, so the day
+  // the station starts working to a clock, this paragraph changes by itself.
+  const clocked = r.cv_steadier / Math.max(1, r.cv_n);
+  $("#recurFoot").textContent = r.cv_obs == null ? "" :
+    `Above that floor, though, there is no clock. Give each song the same number of plays ` +
+    `and drop them at random through the window — allowing only the same minimum gap — and ` +
+    `the made-up schedule is about as even as the real one ` +
+    `(${r.cv_null.toFixed(2)} against ${r.cv_obs.toFixed(2)}; a coin-flip process scores 1.0). ` +
+    (clocked > 0.62
+      ? `${pct(clocked)} of songs are steadier than their own random twin, which is more than ` +
+        `chance would give — something clock-like may be creeping in.`
+      : `${pct(clocked)} of songs come out steadier than their own random twin, and chance ` +
+        `alone would give about half. So this is a shuffle with a cooling-off period, not a ` +
+        `rotation clock — the station picks what to play next, not when to play it again.`);
+
+  const bandRoot = $("#recurBands");
+  bandRoot.replaceChildren();
+  const maxBand = Math.max(...r.bands.map(b => b.songs));
+  for (const b of r.bands) {
+    if (!b.songs) continue;
+    const card = el("div", "bandcard");
+    card.append(el("div", "bname", b.label),
+                el("div", "brange", b.to_h == null ? `over ${b.from_h}h apart`
+                  : b.from_h === 0 ? `under ${b.to_h}h apart`
+                  : `${b.from_h}–${b.to_h}h apart`),
+                el("div", "bsongs", `${fmtInt(b.songs)} songs`),
+                el("div", "bblurb", b.blurb));
+    const bar = el("div", "bbar");
+    bar.style.width = `${(b.songs / maxBand) * 100}%`;
+    card.append(bar);
+    bandRoot.append(card);
+  }
+
+  const list = el("div", "ranklist");
+  renderRankList(list, r.fastest.map(([sid, med, q1, q3, n]) => ({
+    sid, n: 1 / med, t1: SONGS[sid][1],
+    t2: `${SONGS[sid][0]} · ${n} plays · usually ${shortH(q1)}–${shortH(q3)} apart`,
+    art: SONGS[sid][2], nLabel: `every ${shortH(med)}` })), { max: 1 / r.fastest[0][1] });
+  $("#recurFastest").replaceChildren(list);
+
+  methodology($("#methRecur"), [
+    ["What is being measured",
+     `For every song played at least ${r.min_plays} times in the last ${r.window_days} days, ` +
+     `the gap between each play and the next. Not an average wait — the whole distribution, ` +
+     `because an average hides the thing worth seeing. A song played twice a day for a week ` +
+     `and then dropped has the same average as one played steadily all month.`],
+    ["The floor, and why it is the interesting part",
+     `${pct(1 - r.under_day / r.n_gaps)} of repeats wait longer than a full day, and the bins ` +
+     `below ${shortH(r.p1)} are empty rather than merely thin. A minimum separation is the ` +
+     `one piece of the station's scheduling logic this data pins down directly. It relaxes ` +
+     `in December, when the holiday pool gets small enough that the station has no choice.`],
+    ["The test for a rotation clock",
+     `Each song is compared against itself: same play count, same window, but with the plays ` +
+     `dropped at random subject to the same minimum gap. The comparison is the coefficient of ` +
+     `variation of the gaps — 0 is clockwork, 1 is memoryless. Real songs score ${r.cv_obs}; ` +
+     `their random twins score ${r.cv_null}, over ${fmtInt(r.cv_n)} songs with at least ` +
+     `${r.cv_min_plays} plays. The floor is granted to the random version at its loosest ` +
+     `reading, so any genuine regularity has the best chance of showing.`],
+    ["What this can't tell you",
+     `Nothing about *why* a song is picked — the pool is clearly weighted, and this says ` +
+     `nothing about the weights. And a silence is a silence: during the years the programme ` +
+     `grid was running, roughly five hours a day had no music at all, which stretches some ` +
+     `gaps for reasons that have nothing to do with the song.`],
+  ]);
+}
+
+// ---------- how much the playlist changed ----------
+// "Just added" and "dropped" are this window against the last one. This is the
+// same test against a window further back, which is the question a reader
+// actually has: how much of what I hear now is what I heard then?
+function initTurnover() {
+  syncChips($("#turnoverFilters"), "back", turnoverBack);
+  $("#turnoverFilters").addEventListener("click", e => {
+    const btn = e.target.closest(".chip"); if (!btn) return;
+    turnoverBack = +btn.dataset.back;
+    syncChips($("#turnoverFilters"), "back", turnoverBack);
+    renderTurnover();
+    writeURL();
+  });
+  renderTurnover();
+}
+// The pool as it stood `endMs` — the same rule build.py uses, so a pool
+// computed here and one computed there always mean the same thing.
+function poolAt(endMs) {
+  const win = META.rotation.window_days * DAY_MS;
+  const min = META.rotation.min_plays;
+  const counts = new Map();
+  // Half-open on the same side build.py's `ts_utc >= cutoff` is, or the
+  // current-pool figure here comes out one short of the one in the card above.
+  for (let i = firstIdxAtOrAfter(endMs - 1 - win); i < N && T[i] < endMs; i++)
+    counts.set(SID[i], (counts.get(SID[i]) || 0) + 1);
+  const pool = new Set();
+  for (const [sid, n] of counts) if (n >= min) pool.add(sid);
+  return pool;
+}
+function renderTurnover() {
+  const end = T[N - 1] + 1;
+  const now = poolAt(end);
+  const then = poolAt(end - turnoverBack * DAY_MS);
+  let stayed = 0;
+  for (const sid of now) if (then.has(sid)) stayed++;
+  const entered = now.size - stayed, left = then.size - stayed;
+  const overlap = stayed / Math.max(1, new Set([...now, ...then]).size);
+
+  const label = turnoverBack === 365 ? "a year ago" : `${turnoverBack} days ago`;
+  $("#turnoverSub").textContent =
+    `The rotation pool as it stands against the pool ${label} — the same ` +
+    `${META.rotation.min_plays}-plays-in-${META.rotation.window_days}-days test applied at ` +
+    `both dates. How often does Walmart actually change its playlist?`;
+
+  const root = $("#turnoverStats");
+  root.replaceChildren();
+  const total = Math.max(1, entered + left + stayed);
+  for (const [cls, sign, v, l] of [
+    ["in", "+", entered, `entered rotation since ${label}`],
+    ["out", "−", left, `left rotation since ${label}`],
+    ["same", "", stayed, "were in the pool then and still are"],
+  ]) {
+    const d = el("div", "tocell " + cls);
+    d.append(el("div", "tov", sign + fmtInt(v)), el("div", "tol", l));
+    const bar = el("div", "tobar");
+    bar.style.width = `${(v / total) * 100}%`;
+    d.append(bar);
+    root.append(d);
+  }
+
+  // Whether the pool *grew* or merely churned is the whole reading of these
+  // numbers, and it changes with the window — over a month the pool is flat
+  // and this is pure swapping; over a year it is visibly bigger. Say whichever
+  // is true rather than asserting the short-window answer at every setting.
+  const growth = (now.size - then.size) / Math.max(1, then.size);
+  $("#turnoverFoot").textContent =
+    `${pct(overlap)} of the two pools is shared. The pool itself went from ` +
+    `${fmtInt(then.size)} songs to ${fmtInt(now.size)} — ` +
+    (Math.abs(growth) < 0.05
+      ? `essentially flat, so this is the station swapping tracks, not stocking up.`
+      : growth > 0
+        ? `${pct(growth)} bigger, so it is both widening the pool and cycling through it.`
+        : `${pct(-growth)} smaller, so it is tightening the pool as well as cycling it.`);
 }
 
 // ---------- the programme grid, read off the silences ----------
@@ -1107,35 +1527,39 @@ function initBrowse() {
   for (const [key, label] of [["all", "All"], ...STATUSES.map(s => [s[0], s[1]])]) {
     const b = el("button", "chip", label);
     b.dataset.status = key;
-    b.setAttribute("aria-pressed", key === "all");
     const help = STATUSES.find(s => s[0] === key);
     if (help) b.title = help[2];
     sf.append(b);
   }
+  syncChips(sf, "status", browseStatus);
+  sf.hidden = browseMode === "artists";
+  $("#browseQ").value = browseQ;
+  syncChips($("#browseSection .filters"), "mode", browseMode);
+
   sf.addEventListener("click", e => {
     const btn = e.target.closest(".chip"); if (!btn) return;
-    for (const c of sf.querySelectorAll(".chip")) c.setAttribute("aria-pressed", "false");
-    btn.setAttribute("aria-pressed", "true");
     browseStatus = btn.dataset.status;
+    syncChips(sf, "status", browseStatus);
     browseLimit = 50;
     renderBrowse();
+    writeURL();
   });
 
   $("#browseQ").addEventListener("input", e => {
     browseQ = e.target.value.trim().toLowerCase();
     browseLimit = 50;
     renderBrowse();
+    writeURL();
   });
   $("#browseSection .filters").addEventListener("click", e => {
     const btn = e.target.closest("[data-mode]"); if (!btn) return;
-    for (const c of btn.parentElement.querySelectorAll("[data-mode]"))
-      c.setAttribute("aria-pressed", "false");
-    btn.setAttribute("aria-pressed", "true");
     browseMode = btn.dataset.mode;
+    syncChips(btn.parentElement, "mode", browseMode);
     browseLimit = 50;
     browseSort = "n"; browseDesc = true;
     sf.hidden = browseMode === "artists";
     renderBrowse();
+    writeURL();
   });
   $("#browseMore").addEventListener("click", () => { browseLimit += 200; renderBrowse(); });
   renderBrowse();
@@ -1221,6 +1645,7 @@ function renderBrowse() {
     else { browseSort = th.dataset.sort; browseDesc = th.dataset.sort !== "t1" && th.dataset.sort !== "t2"; }
     browseLimit = Math.max(50, browseLimit);
     renderBrowse();
+    writeURL();
   });
 
   const btn = $("#browseMore");
@@ -1413,6 +1838,7 @@ function songPage(sid) {
   }
   const longest = clean.length ? Math.max(...clean) : 0;
   const sorted = gaps.slice().sort((a, b) => a - b);
+  const q = f => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * f))];
   const median = sorted.length ? sorted[sorted.length >> 1] : 0;
   const shortest = sorted.length ? sorted[0] : 0;
   const peakHour = sc.byHour.indexOf(Math.max(...sc.byHour));
@@ -1424,11 +1850,16 @@ function songPage(sid) {
     [dateFmt.format(new Date(first)), "first heard"],
     [dateFmt.format(new Date(last)), "last heard"],
     [median ? fmtDur(median) : null, "typical wait between plays"],
+    // The middle half of the waits. A median on its own reads as a schedule;
+    // the spread is what says whether there is one.
+    [sorted.length >= 8 ? `${fmtDur(q(0.25))} – ${fmtDur(q(0.75))}` : null,
+     "the middle half of its waits"],
     [shortest ? fmtDur(shortest) : null, "shortest wait ever"],
     [longest ? fmtDur(longest) : null, "longest silence"],
     [`${hourLabel(peakHour)}–${hourLabel((peakHour + 1) % 24)}`, "favourite hour"],
   ]));
   page.append(windowRow(sid));
+  if (sorted.length >= 12) page.append(gapCard(sorted));
 
   page.append(scatterCard(sc.times, "Every play, one dot",
     "Date across, time of day down. Vertical bands are days it was hammered; a " +
@@ -1591,6 +2022,48 @@ function scatterCard(times, title, note) {
       r: 1.7, fill: "var(--series-1)", opacity: 0.55 }));
   }
   return chartCard(title, svg, note);
+}
+// This song's own version of the station-wide recurrence chart: how long it
+// waits before coming back. The station's floor shows up here as an empty left
+// edge, and a song with a genuinely erratic rotation shows up as a long tail.
+function gapCard(sorted) {
+  const r = META.recurrence;
+  const bins = (r && r.hist.map(b => b[0])) || [0, 4, 8, 12, 16, 20, 24, 30, 36, 48, 72, 120, 168];
+  const edges = bins.concat([Infinity]);
+  const counts = edges.slice(0, -1).map((lo, i) =>
+    sorted.filter(g => g >= lo * 3600000 && g < edges[i + 1] * 3600000).length);
+
+  const W = 460, H = 160, left = 30, right = 8, top = 10, bottom = 34;
+  const iw = W - left - right, ih = H - top - bottom;
+  const maxV = Math.max(1, ...counts);
+  const bw = iw / counts.length;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "How long this song waits before playing again" });
+  for (const v of [0, maxV]) {
+    const y = top + ih - (v / maxV) * ih;
+    svg.append(svgEl("line", { x1: left, x2: W - right, y1: y, y2: y,
+      class: v === 0 ? "axis-line" : "grid-line" }));
+    svg.append(svgText(left - 5, y + 4, fmtInt(v), "end"));
+  }
+  counts.forEach((n, i) => {
+    if (n) {
+      const bh = Math.max(1.5, (n / maxV) * ih);
+      const rect = svgEl("rect", { x: left + i * bw + bw * 0.12, y: top + ih - bh,
+        width: Math.max(1.5, bw * 0.76), height: bh, rx: 1.5, fill: "var(--series-1)" });
+      rect.dataset.tip = JSON.stringify({
+        v: `${fmtInt(n)} time${n === 1 ? "" : "s"}`,
+        l: edges[i + 1] === Infinity ? `waited more than ${bins[i]} hours`
+                                     : `waited ${bins[i]}–${edges[i + 1]} hours` });
+      svg.append(rect);
+    }
+    if (i % 3 === 0)
+      svg.append(svgText(left + i * bw + bw / 2, H - 16,
+        edges[i + 1] === Infinity ? `${bins[i]}h+` : `${bins[i]}h`, "middle"));
+  });
+  svg.append(svgText(left, H - 4, "time until it played again", "start"));
+  return chartCard("How long before it came back", svg,
+    `Every gap between one play and the next, all ${fmtInt(sorted.length)} of them. ` +
+    `The empty bins on the left are the station's rule against repeating a song too soon.`);
 }
 function recentPlaysCard(times, title) {
   const card = el("div", "card");
