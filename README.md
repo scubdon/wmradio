@@ -1,4 +1,4 @@
-# 📻 Recently played at Walmart
+# A record of the songs played on Walmart Radio
 
 **→ [scubdon.github.io/wmradio](https://scubdon.github.io/wmradio/)**
 
@@ -51,8 +51,6 @@ panel stating its thresholds and what it can't tell you.
 
 - **The rotation pool and its tiers** — how often each song comes round, and
   which tracks entered or were retired against the previous window.
-- **A weekly rotation changelog** — the same pool test re-run at weekly
-  intervals, so turnover becomes a series rather than a single number.
 - **Day and night are different stations** — songs are tested against a
   station-wide night baseline on Central time, and far more of them skew than
   chance allows.

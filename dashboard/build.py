@@ -6,8 +6,8 @@ Emits into dashboard/site/data/:
   songs.json  — [[artist, song, artwork_file|null, total_plays], ...]; song id = index
   plays.json  — {"t0": <epoch-minute>, "dt": [...], "s": [...]}
                 delta-encoded UTC epoch-minutes + song ids, ascending
-  meta.json   — totals, recording gaps, rotation inference, weekly rotation
-                changelog, records & oddities, dataset coverage
+  meta.json   — totals, recording gaps, rotation inference, records & oddities,
+                dataset coverage
   plays.csv / plays.parquet — full play log (played_at_utc, artist, song)
                 for public download; linked from the site footer
 
@@ -44,9 +44,6 @@ CT = ZoneInfo("America/Chicago")
 
 ROTATION_WINDOW_DAYS = 28
 ROTATION_MIN_PLAYS = 3
-
-# Rotation changelog: how many 7-day steps of pool-vs-pool comparison to publish.
-CHANGELOG_WEEKS = 26
 
 # What counts as the logger being down, as opposed to the stream simply not
 # reporting a track. Deliberately conservative: hour-long silences are common
@@ -739,6 +736,13 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
 
     seq:  (epoch_minute, song_id) ascending
     down: [(start_min, end_min)] stretches the logger was not listening
+
+    Every query here picks a single winning row, and ties for the top spot are
+    normal rather than exotic — hundreds of songs sit at exactly one play. So
+    each ORDER BY carries enough columns to break every tie, or the same
+    database would publish a different record on the next build. Dated records
+    break ties towards the earlier date: whoever reached the number first holds
+    it until something beats it, rather than merely matching it.
     """
     def rec(key, title, value, sub, sid=None, artist=None):
         return {"k": key, "title": title, "value": value, "sub": sub,
@@ -750,7 +754,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
     # --- all-time leaders -------------------------------------------------
     top_artist, artist_plays, artist_songs = con.execute("""
         SELECT artist, count(*) n, count(DISTINCT song) k
-        FROM plays GROUP BY 1 ORDER BY n DESC LIMIT 1
+        FROM plays GROUP BY 1 ORDER BY n DESC, artist LIMIT 1
     """).fetchone()
     out.append(rec("top_song", "Most-played song ever", f"{songs[0][3]:,} plays",
                    f"{songs[0][1]} — {songs[0][0]}", sid=0))
@@ -759,7 +763,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
 
     wide = con.execute("""
         SELECT artist, count(DISTINCT song) k FROM plays
-        GROUP BY 1 ORDER BY k DESC LIMIT 1
+        GROUP BY 1 ORDER BY k DESC, artist LIMIT 1
     """).fetchone()
     out.append(rec("widest_artist", "Most different songs by one artist", f"{wide[1]} songs",
                    f"{wide[0]} — everything they have ever had played",
@@ -768,14 +772,14 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
     # --- single-day extremes ---------------------------------------------
     d = con.execute("""
         SELECT artist, song, date_local::VARCHAR, count(*) n FROM plays
-        GROUP BY 1,2,3 ORDER BY n DESC LIMIT 1
+        GROUP BY 1,2,3 ORDER BY n DESC, 3, artist, song LIMIT 1
     """).fetchone()
     out.append(rec("song_day", "Most plays of one song in a day", f"{d[3]}×",
                    f"{d[1]} — {d[0]}, on {d[2]}", sid=sid_of(d[0], d[1])))
 
     d = con.execute("""
         SELECT artist, date_local::VARCHAR, count(*) n, count(DISTINCT song) k
-        FROM plays GROUP BY 1,2 ORDER BY n DESC LIMIT 1
+        FROM plays GROUP BY 1,2 ORDER BY n DESC, 2, artist LIMIT 1
     """).fetchone()
     out.append(rec("artist_day", "Most airtime for one artist in a day", f"{d[2]} plays",
                    f"{d[0]} — {d[3]} different songs, on {d[1]}", artist=d[0]))
@@ -790,7 +794,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
                             THEN 1 ELSE 0 END) x
             FROM plays GROUP BY 1,2 HAVING count(*) >= 20)
         SELECT artist, song, n, x::DOUBLE / n FROM s
-        ORDER BY 4 DESC, n DESC LIMIT 1
+        ORDER BY 4 DESC, n DESC, artist, song LIMIT 1
     """).fetchone()
     if season:
         out.append(rec("seasonal", "Most relentlessly seasonal song",
@@ -900,7 +904,9 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
     # --- who owns the current rotation ------------------------------------
     pool_artists = Counter(songs[sid][0] for sid in pool_ids)
     if pool_artists:
-        name, k = pool_artists.most_common(1)[0]
+        # most_common() would settle a tie by whichever artist the pool set
+        # happened to yield first; sort the name in as a tiebreaker instead.
+        name, k = min(pool_artists.items(), key=lambda kv: (-kv[1], kv[0]))
         out.append(rec("pool_artist", "Most songs in rotation right now", f"{k} songs",
                        f"{name} — of the {len(pool_ids):,} titles currently in rotation",
                        artist=name))
@@ -943,7 +949,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
     # --- station-level extremes -------------------------------------------
     d = con.execute("""
         SELECT date_local::VARCHAR, count(*) n, count(DISTINCT song) k
-        FROM plays GROUP BY 1 ORDER BY n DESC LIMIT 1
+        FROM plays GROUP BY 1 ORDER BY n DESC, 1 LIMIT 1
     """).fetchone()
     out.append(rec("busiest", "Busiest day the station has had", f"{d[1]} plays",
                    f"{d[0]} — {d[2]} different songs, one every "
@@ -977,18 +983,23 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
         WITH f AS (SELECT artist, song, min(date_local) d FROM plays GROUP BY 1, 2)
         SELECT d::VARCHAR, count(*) k FROM f
         WHERE d > (SELECT min(date_local) + 60 FROM plays)
-        GROUP BY 1 ORDER BY k DESC LIMIT 1
+        GROUP BY 1 ORDER BY k DESC, 1 LIMIT 1
     """).fetchone()
     if d:
         out.append(rec("intake", "Most new songs added in one day", f"{d[1]} songs",
                        f"all heard for the first time on {d[0]}"))
 
     # --- the long tail ----------------------------------------------------
+    # One row, picked once: several one-play songs routinely share the same
+    # date, and independent any_value(... ORDER BY d) calls are free to answer
+    # from different rows, which would pair one song's title with another's
+    # artist. Take the whole row in a single ORDER BY instead, alphabetical
+    # within a date so the same day always yields the same track.
     once = con.execute("""
-        WITH s AS (SELECT artist, song, count(*) n, max(date_local) d FROM plays GROUP BY 1, 2)
-        SELECT count(*), any_value(artist ORDER BY d DESC), any_value(song ORDER BY d DESC),
-               any_value(d ORDER BY d DESC)::VARCHAR
-        FROM s WHERE n = 1
+        WITH s AS (SELECT artist, song, count(*) n, max(date_local) d FROM plays GROUP BY 1, 2),
+        o AS (SELECT artist, song, d FROM s WHERE n = 1)
+        SELECT (SELECT count(*) FROM o), artist, song, d::VARCHAR
+        FROM o ORDER BY d DESC, artist, song LIMIT 1
     """).fetchone()
     if once and once[0]:
         out.append(rec("once", "Songs played exactly once, ever", f"{once[0]} songs",
@@ -1006,7 +1017,8 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
         x AS (SELECT p.artist, p.song, h, count(*) k FROM p JOIN t USING (artist, song)
               GROUP BY 1, 2, 3)
         SELECT x.artist, x.song, x.h, x.k, t.n
-        FROM x JOIN t USING (artist, song) ORDER BY x.k::DOUBLE / t.n DESC LIMIT 1
+        FROM x JOIN t USING (artist, song)
+        ORDER BY x.k::DOUBLE / t.n DESC, x.artist, x.song, x.h LIMIT 1
     """).fetchone()
     if ck:
         artist, song, h, k, n = ck
@@ -1077,7 +1089,7 @@ def main():
 
     # --- songs.json (id = index, ordered by total plays desc) ---
     songs = con.execute("""
-        SELECT artist, song, any_value(artwork_file) AS art, count(*) AS n
+        SELECT artist, song, min(artwork_file) AS art, count(*) AS n
         FROM plays GROUP BY artist, song ORDER BY n DESC, artist, song
     """).fetchall()
     songs_index = {(a, s): i for i, (a, s, _, _) in enumerate(songs)}
@@ -1136,14 +1148,6 @@ def main():
         [(ts, songs_index[(a, s)]) for ts, a, s in skew_rows],
         {songs_index[(a, s)]: (f, l) for a, s, f, l in span_rows},
     )
-
-    # --- weekly rotation changelog ---------------------------------------
-    log_cutoff = max_ts - timedelta(days=CHANGELOG_WEEKS * 7 + ROTATION_WINDOW_DAYS)
-    log_rows = con.execute(
-        "SELECT ts_utc, artist, song FROM plays WHERE ts_utc >= ?", [log_cutoff]
-    ).fetchall()
-    changelog = build_changelog(
-        [(ts, songs_index[(a, s)]) for ts, a, s in log_rows], max_ts)
 
     # --- weekly debuts (songs first ever heard that week) ---
     debuts = con.execute("""
@@ -1280,6 +1284,7 @@ def main():
               f"respecting the same {h(r['p1'])} floor — {r['cv_steadier']}/{r['cv_n']} songs "
               f"steadier than their own null (half = no clock)")
         print("  bands: " + " · ".join(f"{b['label']} {b['songs']}" for b in r["bands"]))
+    print(f"records: {len(records)}")
     if silence:
         b, a = silence["before"], silence["after"]
         print("silence grid: " + " · ".join(

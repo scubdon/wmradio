@@ -60,7 +60,7 @@
 
   <section id="topSection">
     <h2>Top of the charts</h2>
-    <p class="sub">Most-played songs and artists. The range chips scope both lists and the heatmap below.</p>
+    <p class="sub">Most-played songs and artists. The range chips scope both lists.</p>
     <div class="filters" id="rangeFilters" role="group" aria-label="Date range">
       <span class="flabel">Range</span>
       <button class="chip" data-days="7">Last 7 days</button>
@@ -81,13 +81,6 @@
         <button class="morebtn" id="moreArtists">Show 50 more</button>
       </div>
     </div>
-    <div class="card" style="margin-top:16px">
-      <h3 class="cardtitle">When the music plays</h3>
-      <p class="sub" id="heatSub">Plays by hour and day of week, shown in your local time.</p>
-      <div class="chart-wrap" id="heatWrap"></div>
-      <div class="heat-scale" id="heatScale"></div>
-      <details class="tablewrap"><summary>Table view</summary><div id="heatTable"></div></details>
-    </div>
   </section>
 
   <section id="dailySection">
@@ -97,6 +90,53 @@
       <div class="chart-wrap" id="dailyWrap"></div>
       <details class="tablewrap"><summary>Table view (monthly)</summary><div id="dailyTable"></div></details>
     </div>
+  </section>
+
+  <section id="wrappedSection">
+    <h2>Your Walmart Radio</h2>
+    <p class="sub">Pick the hours you're in the store — working or wandering — and see what
+       the radio played at you. Times are your local time. Overnight shifts work too:
+       pick something like 10:00p to 6:30a, and choose the days your shift <em>starts</em>.</p>
+    <div class="card">
+      <div class="wrapped-controls">
+        <div class="group" id="dayBtns" role="group" aria-label="Days of week"></div>
+        <div class="group">
+          <label for="hourFrom">From</label> <select id="hourFrom"></select>
+          <label for="hourTo">to</label> <select id="hourTo"></select>
+        </div>
+        <div class="group">
+          <label for="wrapRange">over</label>
+          <select id="wrapRange">
+            <option value="30">last 30 days</option>
+            <option value="90">last 90 days</option>
+            <option value="365" selected>last year</option>
+            <option value="0">all time</option>
+          </select>
+        </div>
+      </div>
+      <h3 class="cardtitle wraptitle">Your Walmart wrapped</h3>
+      <div class="wrapped-summary" id="wrapSummary"></div>
+      <p class="sub" id="wrapLede"></p>
+      <div id="wrapShowsBlock" hidden>
+        <h3 class="cardtitle" style="margin-top:18px">Shows your shift sat through</h3>
+        <p class="sub" id="wrapShowsSub"></p>
+        <div class="shows" id="wrapShows"></div>
+      </div>
+      <div class="cols2">
+        <div><h3 class="cardtitle">Your top songs</h3><div class="ranklist" id="wrapSongs"></div></div>
+        <div><h3 class="cardtitle">Your top artists</h3><div class="ranklist" id="wrapArtists"></div></div>
+      </div>
+      <h3 class="cardtitle" style="margin-top:18px">Songs your shift hears more than everyone else</h3>
+      <p class="sub" id="wrapSkewSub"></p>
+      <div class="ranklist" id="wrapSkew"></div>
+    </div>
+  </section>
+
+  <section id="recordsSection">
+    <h2>Records &amp; oddities</h2>
+    <p class="sub">The extremes a two-year log turns up. Every one of these is
+       recomputed from scratch on each refresh, so they do change.</p>
+    <div class="records" id="recordsList"></div>
   </section>
 
   <section id="rotationSection">
@@ -154,22 +194,6 @@
         <p class="sub" id="droppedSub"></p>
         <div class="droptable" id="droppedList"></div>
       </div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <h3 class="cardtitle">The rotation changelog</h3>
-      <p class="sub" id="changelogSub"></p>
-      <div class="chart-wrap" id="changelogWrap"></div>
-      <div class="legend" id="changelogLegend"></div>
-      <details class="tablewrap"><summary>Week by week</summary><div id="changelogTable"></div></details>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <h3 class="cardtitle">How the playlist shifts</h3>
-      <p class="sub">Two ways of measuring how narrow the station gets. The
-         December spikes are the holiday-music takeover.</p>
-      <div class="chart-wrap" id="trendWrap"></div>
-      <div class="legend" id="trendLegend"></div>
     </div>
 
     <div class="card" id="silenceCard" style="margin-top:16px" hidden>
