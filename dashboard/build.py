@@ -365,32 +365,6 @@ def build_recurrence(seq):
     }
 
 
-def build_changelog(rows, max_ts, weeks=CHANGELOG_WEEKS):
-    """
-    The same pool test as build_rotation, re-run at weekly intervals, so the
-    turnover figure becomes a series instead of a single number: you can see
-    Walmart actually swapping tracks in and out week by week.
-
-    rows: (ts_utc, song_id) covering at least weeks*7 + ROTATION_WINDOW_DAYS days.
-    """
-    ends = [max_ts - timedelta(days=7 * i) for i in range(weeks, -1, -1)]
-    pools = []
-    for end in ends:
-        start = end - timedelta(days=ROTATION_WINDOW_DAYS)
-        c = Counter(sid for ts, sid in rows if start <= ts < end)
-        pools.append({sid for sid, n in c.items() if n >= ROTATION_MIN_PLAYS})
-
-    out = []
-    for i in range(1, len(pools)):
-        out.append([
-            ends[i].date().isoformat(),
-            len(pools[i] - pools[i - 1]),
-            len(pools[i - 1] - pools[i]),
-            len(pools[i]),
-        ])
-    return out
-
-
 def outage_spans(plays_min):
     """
     Stretches the logger was demonstrably not listening, read off the play
@@ -728,7 +702,7 @@ def build_silence(con, down):
     }
 
 
-def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur):
+def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
     """
     Records & oddities — the "how is that even possible" facts a 224k-play log
     contains and a chart doesn't show. Everything here is one query or one pass;
@@ -1053,14 +1027,6 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, changelog, recur
                        f"{(date(year, 12, 25) - d0).days} days out. "
                        f"{n:,} holiday plays followed before the year was over."))
 
-    # --- the biggest week of playlist churn -------------------------------
-    if changelog:
-        wk = max(changelog, key=lambda r: r[1] + r[2])
-        out.append(rec("turnover", "Biggest week of playlist turnover",
-                       f"{wk[1] + wk[2]} songs",
-                       f"in the week to {wk[0]}, {wk[1]} entered rotation and {wk[2]} left "
-                       f"— against a pool of {wk[3]:,}"))
-
     # --- the song that keeps the best time ---------------------------------
     # Straight out of the recurrence analysis: of everything in rotation, the
     # track whose gaps vary least. This is the scheduler at its most visible.
@@ -1213,7 +1179,7 @@ def main():
     recurrence = build_recurrence(
         [(epoch_min(ts), songs_index[(a, s)]) for ts, a, s in rot_rows])
     records = build_records(con, seq, songs_out, songs_index,
-                            pool_ids, down, changelog, recurrence)
+                            pool_ids, down, recurrence)
     blank_days = sum((date.fromisoformat(b) - date.fromisoformat(a)).days + 1
                      for a, b in gaps)
     coverage = build_coverage(play_min, down, first_day, last_day, blank_days)
@@ -1232,7 +1198,6 @@ def main():
         "trends": [[mo, p, d, t, f] for mo, p, d, t, f in trends],
         "rotation": rotation,
         "recurrence": recurrence,
-        "changelog": changelog,
         "records": records,
         "coverage": coverage,
         "silence": silence,
@@ -1274,7 +1239,6 @@ def main():
           f"{coverage['span_days']} days · {coverage['n_outages']} outages "
           f"({coverage['outage_hours']}h, longest {coverage['longest_outage_hours']}h) · "
           f"{coverage['n_quiet']} short quiet blocks ({coverage['quiet_hours']}h)")
-    print(f"changelog: {len(changelog)} weeks · records: {len(records)}")
     if recurrence:
         r = recurrence
         h = lambda m: f"{m / 60:.1f}h"

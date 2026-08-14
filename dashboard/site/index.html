@@ -16,9 +16,9 @@
     <div class="navlinks">
       <a href="#recentSection">Recent</a>
       <a href="#topSection">Charts</a>
-      <a href="#rotationSection">The playlist</a>
-      <a href="#recordsSection">Records</a>
       <a href="#wrappedSection">Your radio</a>
+      <a href="#recordsSection">Records</a>
+      <a href="#rotationSection">The playlist</a>
       <a href="#daySection">One day</a>
       <a href="#browseSection">Browse</a>
       <a href="#dataSection">Data</a>
@@ -117,6 +117,7 @@
       <h3 class="cardtitle wraptitle">Your Walmart wrapped</h3>
       <div class="wrapped-summary" id="wrapSummary"></div>
       <p class="sub" id="wrapLede"></p>
+      <div class="cols2 versus" id="wrapVersus"></div>
       <div id="wrapShowsBlock" hidden>
         <h3 class="cardtitle" style="margin-top:18px">Shows your shift sat through</h3>
         <p class="sub" id="wrapShowsSub"></p>
@@ -229,54 +230,6 @@
         <summary>How this is worked out</summary>
         <div class="methbody" id="methDayNight"></div>
       </details>
-    </div>
-  </section>
-
-  <section id="recordsSection">
-    <h2>Records &amp; oddities</h2>
-    <p class="sub">The extremes a two-year log turns up. Every one of these is
-       recomputed from scratch on each refresh, so they do change.</p>
-    <div class="records" id="recordsList"></div>
-  </section>
-
-  <section id="wrappedSection">
-    <h2>Your Walmart Radio</h2>
-    <p class="sub">Pick the hours you're in the store — working or wandering — and see what
-       the radio played at you. Times are your local time. Overnight shifts work too:
-       pick something like 10:00p to 6:30a, and choose the days your shift <em>starts</em>.</p>
-    <div class="card">
-      <div class="wrapped-controls">
-        <div class="group" id="dayBtns" role="group" aria-label="Days of week"></div>
-        <div class="group">
-          <label for="hourFrom">From</label> <select id="hourFrom"></select>
-          <label for="hourTo">to</label> <select id="hourTo"></select>
-        </div>
-        <div class="group">
-          <label for="wrapRange">over</label>
-          <select id="wrapRange">
-            <option value="30">last 30 days</option>
-            <option value="90">last 90 days</option>
-            <option value="365" selected>last year</option>
-            <option value="0">all time</option>
-          </select>
-        </div>
-      </div>
-      <h3 class="cardtitle wraptitle">Your Walmart wrapped</h3>
-      <div class="wrapped-summary" id="wrapSummary"></div>
-      <p class="sub" id="wrapLede"></p>
-      <div class="cols2 versus" id="wrapVersus"></div>
-      <div id="wrapShowsBlock" hidden>
-        <h3 class="cardtitle" style="margin-top:18px">Shows your shift sat through</h3>
-        <p class="sub" id="wrapShowsSub"></p>
-        <div class="shows" id="wrapShows"></div>
-      </div>
-      <div class="cols2">
-        <div><h3 class="cardtitle">Your top songs</h3><div class="ranklist" id="wrapSongs"></div></div>
-        <div><h3 class="cardtitle">Your top artists</h3><div class="ranklist" id="wrapArtists"></div></div>
-      </div>
-      <h3 class="cardtitle" style="margin-top:18px">Songs your shift hears more than everyone else</h3>
-      <p class="sub" id="wrapSkewSub"></p>
-      <div class="ranklist" id="wrapSkew"></div>
     </div>
   </section>
 
