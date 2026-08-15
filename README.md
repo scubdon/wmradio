@@ -36,8 +36,8 @@ Song identity is the `(artist, song)` pair.
 
 **Before you build on it:** play counts are lower bounds. About 75% of the clock
 hours in the span contain at least one logged play; most of the rest is the
-station's own doing rather than the logger's. Until April 2026 the stream ran a
-fixed daily grid of quiet hours (see below), and there are a couple of dozen
+live-show grid rather than the logger. Until April 2026 the station ran three
+live shows on fixed daily slots (see below), and there are a couple of dozen
 genuine logger outages on top of that. The site's
 [Use the data](https://scubdon.github.io/wmradio/#dataSection) section lists
 every outage and explains how coverage is measured — check anything that
@@ -54,11 +54,11 @@ panel stating its thresholds and what it can't tell you.
 - **Day and night are different stations** — songs are tested against a
   station-wide night baseline on Central time, and far more of them skew than
   chance allows.
-- **The station's daily schedule, read off the silences** — the stream announces
-  track changes and nothing else, so an hour that logs nothing is an hour it
-  wasn't playing songs. Those hours land on the same Central-time slots every
-  day. Matched afterwards against the station's own published programming page,
-  they are its three live talk shows, to the hour.
+- **Chris, Bo, Kirby Gwen & Friends** — the station's three live shows, on the
+  fixed Central-time slots its own published programming page gives them, down
+  to the morning show running two hours on weekdays and one at weekends. The
+  music log carries no songs inside those hours and is busy outside them, so the
+  daily grid reads straight off the schedule.
 - **Records & oddities**, seasonal concentration, per-song and per-artist pages
   with play calendars and dot-per-play scatters, a personal "your shift"
   breakdown, and a searchable dataset explorer.

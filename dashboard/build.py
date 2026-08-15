@@ -46,15 +46,15 @@ ROTATION_WINDOW_DAYS = 28
 ROTATION_MIN_PLAYS = 3
 
 # What counts as the logger being down, as opposed to the stream simply not
-# reporting a track. Deliberately conservative: hour-long silences are common
+# reporting a track. Deliberately conservative: hour-long gaps are common
 # and *structured* — they land on the same Central-time hours every day, which
-# is a programme grid, not failure (see build_silence). Only multi-hour holes
+# is the live-show grid, not failure (see build_silence). Only multi-hour holes
 # get called downtime, and in practice every one of those runs half a day or
 # more.
 OUTAGE_MIN_MINUTES = 6 * 60
 
-# Silences long enough to be worth reporting, but short enough to be the
-# station rather than the logger.
+# Gaps long enough to be worth reporting, but short enough to be the show grid
+# rather than the logger.
 QUIET_MIN_MINUTES = 45
 
 # An hour counts as off air if it logged at most this many track changes. Not
@@ -381,9 +381,9 @@ def build_coverage(plays_min, down, first_day, last_day, n_gap_days):
     span was actually observed, and what the holes are.
 
     Coverage is stated as the share of clock hours containing at least one
-    logged play. That is the claim the data can actually support: the rest of
-    the silence splits into a handful of long outages (below) and a great many
-    short, regularly-timed quiet blocks that are the stream's own behaviour,
+    logged play. That is the claim the data can actually support: the rest
+    splits into a handful of long outages (below) and a great many short,
+    regularly-timed blocks with no music that line up with the live-show grid,
     and it would be dishonest to bundle the second kind into a downtime figure.
     """
     span = plays_min[-1] - plays_min[0]
@@ -418,17 +418,17 @@ def write_data_readme(meta):
 
     The site explains all of this, but a CSV that has been passed on twice has
     left the site behind, and the caveats are the part you cannot reconstruct
-    from the file: which silences are ours and which are the station's, what
+    from the file: which gaps are ours and which are the show grid, what
     song identity means, and what the strings have *not* been normalised
     against. Generated every build so the figures cannot drift from the data.
     """
     c, sil = meta["coverage"], meta["silence"]
     gaps = "\n".join(f"  {a}  to  {b}" for a, b in meta["gaps"]) or "  (none)"
     grid = (f"""
-Until {sil['changeover']} the station ran a fixed daily grid of quiet hours —
-about {sil['before']['silent_hours_per_day']} hours out of every 24, always the same
-Central-time slots. Those are the station's three live talk shows, and the
-stream reports no track changes during them. Since {sil['changeover']} it has run
+Until {sil['changeover']} the station ran three live talk shows on fixed daily
+slots — about {sil['before']['silent_hours_per_day']} hours out of every 24, always the same
+Central-time hours, matching its own published schedule. The log carries no
+music inside them. Since {sil['changeover']} it has run
 music through all 24 hours. If you compare two periods either side of that
 date, you are comparing two different stations.
 """ if sil and sil.get("changeover") and sil.get("before") else "")
@@ -467,21 +467,21 @@ capitalisation and featured-artist credits are reproduced, not cleaned.
 The timestamp is when the change was *observed*, within about a minute of when
 it happened. It is not the track's start time as the station would report it,
 and there is no duration column — the gap to the next row is the closest thing,
-and it is wrong wherever a silence intervenes.
+and it is wrong wherever a gap intervenes.
 
 What is missing, and why it matters
 -----------------------------------
 Play counts are lower bounds. {pct_str(c['uptime'])} of the clock hours in the span contain
-at least one logged play. The rest splits into two kinds of silence, and they
+at least one logged play. The rest splits into two kinds of gap, and they
 are not the same thing:
 
   Logger downtime   {c['n_outages']} outages, {c['outage_hours']:,} hours in total, longest {c['longest_outage_hours']} hours.
                     This is us failing, and it is listed in full below.
-  Station silence   {c['n_quiet']:,} shorter quiet blocks, about {c['quiet_hours']:,} hours. This is
-                    the station not playing songs, and it is a schedule.
+  Live-show grid    {c['n_quiet']:,} shorter blocks with no music, about {c['quiet_hours']:,} hours. These
+                    are the station's three live shows, on a fixed schedule.
 {grid}
 Do not bundle the two into one "downtime" figure; roughly a third of the span
-is silence, and most of it is the station's, not the logger's.
+carries no music, and most of that is the show grid, not the logger.
 
 Logger outages
 --------------
@@ -527,15 +527,13 @@ def describe_days(dows):
 
 def build_silence(con, down):
     """
-    The station's daily programme grid, read off the silences.
+    The station's daily grid of live shows.
 
-    The stream announces a track change and nothing else — no talk, no ads, no
-    dead air. So an hour that logs nothing is an hour the stream was not
-    playing songs, and for most of this log those hours are *the same hours
-    every day* on Central time, the station's own clock. That is a schedule,
-    and it is the only view of one this dataset contains: the published
-    schedule can't be matched against the log (see the project notes), but the
-    holes can.
+    Three live shows hold fixed Central-time slots on the station's own
+    published schedule. For most of this log the music log carries no songs
+    inside those hours and is busy outside them, so grouping every hour by
+    Central-time slot and weekday recovers the grid: the same hours every day
+    on the station's own clock, with the weekday/weekend split intact.
 
     down: [(start_min, end_min)] UTC epoch-minute outage spans, so days the
     logger slept are dropped rather than counted as the station going quiet.
