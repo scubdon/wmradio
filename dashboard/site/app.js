@@ -1665,7 +1665,7 @@ function renderDataSection() {
   const stats = $("#coverageStats");
   stats.replaceChildren();
   for (const [v, l] of [
-    [pct(c.uptime), "of hours have a play"],
+    [pct(c.uptime), "of hours logged something"],
     [fmtInt(c.span_days), "days of span"],
     [fmtInt(c.n_outages), "logger outages"],
     [`${fmtInt(c.outage_hours)}h`, "lost to outages"],
@@ -1683,17 +1683,24 @@ function renderDataSection() {
   const sil = META.silence;
   methodology($("#coverageNote"), [
     ["How coverage is measured",
-     `The share of clock hours between the first and last play that contain at least one ` +
-     `logged track change. ${fmtInt(c.covered_hours)} of ${fmtInt(c.span_hours)} hours qualify.`],
+     `The share of clock hours between the first and last play in which the logger recorded ` +
+     `anything — a song, or one of the markers the early metadata source emitted for a live ` +
+     `show or an advert. ${fmtInt(c.covered_hours)} of ${fmtInt(c.span_hours)} hours qualify. ` +
+     `Songs on their own reach ${pct(c.song_uptime)}; the ${fmtInt(c.n_events)} show and advert markers ` +
+     `account for a further ${fmtInt(c.event_hours)} hours that would otherwise read as unobserved.`],
     ["Where the rest of the time went",
-     `Mostly the live-show grid. There are ${fmtInt(c.n_quiet)} short stretches with no ` +
-     `music totalling about ${fmtInt(c.quiet_hours)} hours, and most of them land in the ` +
-     `same Central-time slots every day: the three live shows` +
-     (sil && sil.changeover ? `, which ran until ${sil.changeover}` : "") + `. ` +
-     `Real downtime is the other kind, and it does not look like that: ${fmtInt(c.n_outages)} ` +
-     `outages totalling ${fmtInt(c.outage_hours)} hours, the longest ` +
-     `${fmtInt(c.longest_outage_hours)} hours, most of them running more than a full day. ` +
-     `The two are counted separately rather than bundled into one downtime figure.`],
+     `Two different things, counted separately rather than bundled into one downtime figure. ` +
+     `${fmtInt(c.n_outages)} outages totalling ${fmtInt(c.outage_hours)} hours, the longest ` +
+     `${fmtInt(c.longest_outage_hours)} hours, are the logger failing — nothing at all was ` +
+     `recorded. The other ${fmtInt(c.n_quiet)} stretches, about ${fmtInt(c.quiet_hours)} hours, ` +
+     `are the stream up but not reporting a song.`],
+    ["Why the shows only show up for the first two years",
+     `The early metadata source named the live shows, which is how ${fmtInt(c.n_shows)} show ` +
+     `blocks and ${fmtInt(c.n_promos)} adverts are in the dataset` +
+     (sil && sil.changeover ? `, and how the grid below was confirmed` : "") + `. ` +
+     `On 2025-07-24 the source changed to one that reports only artist and title, so from that ` +
+     `date the shows leave no trace whatever. Their hours after it are genuinely unobserved, ` +
+     `not empty — which is a limit of the logger, not a fact about the station.`],
     ["What that means for the file",
      `Play counts are lower bounds. A hole in a song's history is usually the station's ` +
      `schedule, occasionally ours — check anything that compares two periods against the ` +
