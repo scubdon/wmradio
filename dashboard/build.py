@@ -375,22 +375,32 @@ def outage_spans(plays_min):
             if b - a >= OUTAGE_MIN_MINUTES]
 
 
-def build_coverage(plays_min, down, first_day, last_day, n_gap_days):
+def build_coverage(plays_min, events, down, first_day, last_day, n_gap_days):
     """
     What a downloader of the CSV needs in order to judge it: how much of the
     span was actually observed, and what the holes are.
 
-    Coverage is stated as the share of clock hours containing at least one
-    logged play. That is the claim the data can actually support: the rest
-    splits into a handful of long outages (below) and a great many short,
-    regularly-timed blocks with no music that line up with the live-show grid,
-    and it would be dishonest to bundle the second kind into a downtime figure.
-    """
-    span = plays_min[-1] - plays_min[0]
-    covered_hours = len({m // 60 for m in plays_min})
-    span_hours = round(span / 60)
+    Coverage is the share of clock hours in which the logger recorded anything
+    at all — a song, or one of the `station_events` rows marking a live show or
+    an advert. Measuring it on songs alone understates the log badly: for the
+    first two years the shows took seven Central-time hours out of every day and
+    produced no music by design, so those hours read as missed when they were
+    observed perfectly well. `song_uptime` keeps the narrower figure.
 
-    quiet = [b - a for a, b in zip(plays_min, plays_min[1:])
+    What is left splits into a handful of long outages, which really are the
+    logger failing, and many short quiet blocks, which are the stream's own
+    behaviour. Bundling the two into one downtime figure would be dishonest, so
+    they stay separate.
+    """
+    events_min = [m for m, _ in events]
+    logged = sorted(set(plays_min) | set(events_min))
+    span = logged[-1] - logged[0]
+    covered_hours = len({m // 60 for m in logged})
+    span_hours = round(span / 60)
+    song_hours = len({m // 60 for m in plays_min})
+    by_kind = Counter(k for _, k in events)
+
+    quiet = [b - a for a, b in zip(logged, logged[1:])
              if QUIET_MIN_MINUTES <= b - a < OUTAGE_MIN_MINUTES]
 
     return {
@@ -400,6 +410,13 @@ def build_coverage(plays_min, down, first_day, last_day, n_gap_days):
         "span_hours": span_hours,
         "covered_hours": covered_hours,
         "uptime": round(covered_hours / max(1, span_hours), 4),
+        # The narrower, songs-only view, and what the events add on top of it.
+        "song_hours": song_hours,
+        "song_uptime": round(song_hours / max(1, span_hours), 4),
+        "event_hours": covered_hours - song_hours,
+        "n_events": len(events_min),
+        "n_shows": by_kind.get("show", 0),
+        "n_promos": by_kind.get("promo", 0),
         "blank_days": n_gap_days,
         "n_outages": len(down),
         "outage_hours": round(sum(b - a for a, b in down) / 60),
@@ -472,16 +489,26 @@ and it is wrong wherever a gap intervenes.
 What is missing, and why it matters
 -----------------------------------
 Play counts are lower bounds. {pct_str(c['uptime'])} of the clock hours in the span contain
-at least one logged play. The rest splits into two kinds of gap, and they
-are not the same thing:
+something the logger recorded — a song, or one of the live-show and advert
+markers described below. Songs alone account for {pct_str(c['song_uptime'])}; the markers
+cover a further {c['event_hours']:,} hours that would otherwise look unobserved. The
+remainder splits into two kinds of gap, and they are not the same thing:
 
   Logger downtime   {c['n_outages']} outages, {c['outage_hours']:,} hours in total, longest {c['longest_outage_hours']} hours.
-                    This is us failing, and it is listed in full below.
-  Live-show grid    {c['n_quiet']:,} shorter blocks with no music, about {c['quiet_hours']:,} hours. These
-                    are the station's three live shows, on a fixed schedule.
+                    Nothing at all was recorded. This is us failing, and it
+                    is listed in full below.
+  Station quiet     {c['n_quiet']:,} shorter blocks with no music, about {c['quiet_hours']:,} hours. The
+                    stream was up; it just was not reporting a song.
 {grid}
-Do not bundle the two into one "downtime" figure; roughly a third of the span
-carries no music, and most of that is the show grid, not the logger.
+Do not bundle the two into one "downtime" figure.
+
+A note on the live shows. For the first two years the station ran three live
+talk shows on a fixed Central-time grid, and the early metadata source named
+them: {c['n_shows']:,} show blocks and {c['n_promos']:,} adverts are in the dataset because of it.
+The source changed on 2025-07-24 to one that reports only artist and title, so
+from that date the shows leave no trace at all — their hours are genuinely
+unobserved rather than empty. Any comparison spanning that date is comparing
+two different loggers.
 
 Logger outages
 --------------
@@ -1051,6 +1078,13 @@ def main():
     DATA_OUT.mkdir(parents=True, exist_ok=True)
     ART_OUT.mkdir(parents=True, exist_ok=True)
 
+    # station_events arrived with scripts/restore_show_rows.py and only covers
+    # the Rockbot-API era; a database that predates it still builds, just with
+    # the old songs-only coverage figure.
+    has_events = bool(con.execute(
+        "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'station_events'"
+    ).fetchone()[0])
+
     # --- songs.json (id = index, ordered by total plays desc) ---
     songs = con.execute("""
         SELECT artist, song, min(artwork_file) AS art, count(*) AS n
@@ -1170,7 +1204,14 @@ def main():
 
     # --- records & dataset coverage --------------------------------------
     play_min = [int(m) for m, _, _ in plays]
-    down = outage_spans(play_min)
+    # Live shows and adverts. They are not songs, so they stay out of every
+    # music statistic, but they are proof the logger was awake — which makes
+    # them the difference between "no music" and "nothing observed".
+    events = [(int(m), k) for m, k in con.execute(
+        "SELECT epoch(ts_utc)::BIGINT // 60, kind FROM station_events ORDER BY ts_utc"
+    ).fetchall()] if has_events else []
+    # An outage is now a stretch with nothing at all in it, not merely no music.
+    down = outage_spans(sorted(set(play_min) | {m for m, _ in events}))
     pool_ids = {sid for sid, n in Counter(songs_index[(a, s)] for _, a, s in rot_rows
                                           ).items() if n >= ROTATION_MIN_PLAYS}
     seq = list(zip(play_min, sids))
@@ -1180,7 +1221,7 @@ def main():
                             pool_ids, down, recurrence)
     blank_days = sum((date.fromisoformat(b) - date.fromisoformat(a)).days + 1
                      for a, b in gaps)
-    coverage = build_coverage(play_min, down, first_day, last_day, blank_days)
+    coverage = build_coverage(play_min, events, down, first_day, last_day, blank_days)
     silence = build_silence(con, down)
 
     meta = {
@@ -1233,8 +1274,10 @@ def main():
     print(f"day/night: {dn['n_night']} night-skewed + {dn['n_day']} day-skewed of "
           f"{dn['n_tested']} tested (chance would give ~{dn['expected']} each); "
           f"z sd={dn['z_sd']}")
-    print(f"coverage: {coverage['uptime'] * 100:.1f}% of hours have a play over "
-          f"{coverage['span_days']} days · {coverage['n_outages']} outages "
+    print(f"coverage: {coverage['uptime'] * 100:.1f}% of hours logged something over "
+          f"{coverage['span_days']} days ({coverage['song_uptime'] * 100:.1f}% a song, "
+          f"+{coverage['event_hours']:,}h from {coverage['n_events']:,} show/advert markers) · "
+          f"{coverage['n_outages']} outages "
           f"({coverage['outage_hours']}h, longest {coverage['longest_outage_hours']}h) · "
           f"{coverage['n_quiet']} short quiet blocks ({coverage['quiet_hours']}h)")
     if recurrence:
