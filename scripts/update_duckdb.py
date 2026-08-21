@@ -9,9 +9,10 @@ Reads from BOTH sources so the old->new cloud function transition is seamless:
   2. Per-play JSON objects (gs://wmradio-metadata/plays/date=YYYY-MM-DD/*.json)
      — written by the v2 function. Only dates >= the DB's last play are pulled.
 
-New rows are deduped against the DB by pick_id. Local-time columns are derived
-in America/New_York (DST-aware, dow_local Monday=0, matching existing rows),
-and artwork is backfilled for songs the DB has already seen.
+New rows are deduped against the DB by pick_id, and artist/song spellings are
+folded through scripts/aliases.py (the feed renames acts over time). Local-time
+columns are derived in America/New_York (DST-aware, dow_local Monday=0, matching
+existing rows), and artwork is backfilled for songs the DB has already seen.
 
 Requires: gcloud CLI (authenticated), duckdb python package.
 """
@@ -23,6 +24,9 @@ from datetime import date
 from pathlib import Path
 
 import duckdb
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aliases import artist_case_sql, song_case_sql
 
 BUCKET = "wmradio-metadata"
 LEGACY_CSV = f"gs://{BUCKET}/radio_plays.csv"
@@ -37,11 +41,20 @@ fresh AS (
     LEFT JOIN plays p USING (pick_id)
     WHERE p.pick_id IS NULL
 ),
+-- Fold the feed's spelling variants before the artwork lookup below, so a
+-- renamed act inherits the artwork already fetched under its canonical name.
+-- Artist first: the song map is keyed on the canonical artist.
+renamed AS (
+    SELECT pick_id, ts_utc, {artist_case} AS artist, song FROM fresh
+),
+folded AS (
+    SELECT pick_id, ts_utc, artist, {song_case} AS song FROM renamed
+),
 derived AS (
     SELECT pick_id, ts_utc,
            timezone('America/New_York', timezone('UTC', ts_utc)) AS ts_local,
            artist, song
-    FROM fresh
+    FROM folded
 ),
 art AS (
     SELECT artist, song,
@@ -139,7 +152,9 @@ def main():
             return
 
         con.execute("BEGIN")
-        con.execute(INSERT_SQL.format(source_union=" UNION ALL ".join(sources)))
+        con.execute(INSERT_SQL.format(
+            source_union=" UNION ALL ".join(sources),
+            artist_case=artist_case_sql(), song_case=song_case_sql()))
         n_new = con.sql("SELECT count(*) FROM incoming").fetchone()[0]
         con.execute("INSERT INTO plays SELECT * FROM incoming")
         con.execute("COMMIT")
