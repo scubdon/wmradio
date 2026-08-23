@@ -34,7 +34,7 @@ are built from:
 
 Song identity is the `(artist, song)` pair.
 
-**Before you build on it:** play counts are lower bounds. About 75% of the clock
+Play counts are lower bounds. About 75% of the clock
 hours in the span contain at least one logged play; most of the rest is the
 live-show grid rather than the logger. Until April 2026 the station ran three
 live shows on fixed daily slots (see below), and there are a couple of dozen
@@ -63,63 +63,6 @@ panel stating its thresholds and what it can't tell you.
   with play calendars and dot-per-play scatters, a personal "your shift"
   breakdown, and a searchable dataset explorer.
 
-## How it works
-
-```
-the stream's public metadata endpoint
-  │  polled every minute by a Cloud Function
-  ▼
-gs://wmradio-metadata/plays/date=YYYY-MM-DD/*.json     one small object per play
-  │
-  │  GitHub Action every 8h (.github/workflows/refresh.yml)
-  ▼
-  download gs://wmradio-metadata/db/radio_plays.duckdb   ← canonical database
-  scripts/update_duckdb.py     ingest new plays, dedupe
-  scripts/fetch_artwork.py     cover art via MusicBrainz + Cover Art Archive
-  upload the database back
-  dashboard/build.py           DuckDB → compact JSON + CSV/Parquet for the site
-  ▼
-GitHub Pages — dashboard/site/, static, no dependencies, no build step
-```
-
-The database is the canonical artifact and lives in the GCS bucket, not in git.
-The Action downloads it, refreshes it, uploads it back, and rebuilds the site
-from it.
-
-## Repo layout
-
-```
-dashboard/build.py        all the analysis: DuckDB → site/data/*.json
-dashboard/site/           the site itself — index.html, app.js, style.css
-scripts/update_duckdb.py  idempotent ingest from the bucket
-scripts/fetch_artwork.py  artwork lookup, idempotent, misses recorded
-artwork/artwork_small/    150px thumbnails used by the site
-.github/workflows/        the refresh-and-deploy Action
-```
-
-The front end is vanilla JavaScript over three pre-built JSON files — no
-framework, no bundler, no dependencies. Anything a browser can derive in one
-pass over the play log (per-song counts, recent-window totals, gaps between
-plays) is left to the client; only cross-song work that would need the whole log
-resident is precomputed in `build.py`.
-
-## Running it locally
-
-The database isn't in the repo, so a full local run needs read access to the
-bucket. With that:
-
-```bash
-pip install duckdb requests
-mkdir -p data
-gcloud storage cp gs://wmradio-metadata/db/radio_plays.duckdb data/
-python3 scripts/update_duckdb.py --skip-csv
-python3 dashboard/build.py
-python3 -m http.server 8137 --directory dashboard/site
-```
-
-Without it, the published `plays.csv` / `plays.parquet` are the same data — load
-either one into DuckDB and the queries in `build.py` will run against a table
-with `played_at_utc, artist, song`.
 
 ## Credits
 
