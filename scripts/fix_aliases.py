@@ -26,7 +26,7 @@ from pathlib import Path
 import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from aliases import ARTIST_ALIASES, SONG_ALIASES, artist_case_sql, song_case_sql
+from aliases import ARTIST_ALIASES, SONG_ALIASES
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "radio_plays.duckdb"
 
@@ -78,12 +78,20 @@ def main():
         print(f"Backup: {backup.name}")
         con = duckdb.connect(str(args.db))
 
-    artist_sql, song_sql = artist_case_sql(), song_case_sql()
     con.execute("BEGIN")
     for table in ("plays", "artwork_misses"):
+        # One targeted statement per alias rather than a CASE over the whole
+        # table. DuckDB rewrites every row group an UPDATE touches and never
+        # returns the space, so an unconditional rewrite of 230k rows added
+        # 20MB to the file to change two of them.
         # Artist first: SONG_ALIASES is keyed on the canonical artist name.
-        con.execute(f"UPDATE {table} SET artist = {artist_sql}")
-        con.execute(f"UPDATE {table} SET song = {song_sql}")
+        for old, new in ARTIST_ALIASES.items():
+            con.execute(f"UPDATE {table} SET artist = ? WHERE artist = ?", [new, old])
+        for (artist, old), new in SONG_ALIASES.items():
+            con.execute(
+                f"UPDATE {table} SET song = ? WHERE artist = ? AND song = ?",
+                [new, artist, old],
+            )
 
     # A merged track can now carry two artwork files. Keep the one the most
     # plays already pointed at.
