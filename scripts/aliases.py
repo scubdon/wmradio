@@ -6,7 +6,7 @@ The metadata feed renames things over time. 'almost monday' became
 groups by the raw string then counts one act as two, so R.E.M. showed 181 plays
 under one name and 17 under the other.
 
-Both the one-off repair (fix_aliases.py) and the daily ingest
+Both the one-off repair (fix_aliases.py) and the scheduled ingest
 (update_duckdb.py) apply this map, which matters because some of these renames
 are live: the feed is still emitting 'REM', so a repair that only touched
 existing rows would come apart again within days.

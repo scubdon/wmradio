@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Daily refresh: pull new plays from the wmradio-metadata bucket into the local
-DuckDB database (data/radio_plays.duckdb).
+Scheduled refresh: pull new plays from the wmradio-metadata bucket into
+the local DuckDB database (data/radio_plays.duckdb).
 
 Reads from BOTH sources so the old->new cloud function transition is seamless:
   1. Legacy monolithic CSV (gs://wmradio-metadata/radio_plays.csv) — written by

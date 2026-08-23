@@ -1,8 +1,13 @@
-name: Daily refresh & deploy
+name: Refresh & deploy
 
 on:
   schedule:
-    - cron: "0 10 * * *"   # 10:00 UTC ≈ 6am ET, after the overnight blocks
+    # Every eight hours, so "Recently played" is never more than a shift stale.
+    # 10:00 UTC ≈ 6am ET keeps the original slot, just after the overnight
+    # blocks; the other two land around early afternoon and late evening ET.
+    # The only per-run cost is shipping the ~78MB database out of GCS and back,
+    # about a cent a time — three a day is noise, hourly would not be.
+    - cron: "0 2,10,18 * * *"
   workflow_dispatch:
   push:
     branches: [main]
@@ -19,8 +24,10 @@ permissions:
   pages: write
   id-token: write
 
+# The job downloads the canonical database, edits it, and uploads it again, so
+# two runs overlapping would silently lose one run's plays. Queue instead.
 concurrency:
-  group: daily-refresh
+  group: refresh-and-deploy
   cancel-in-progress: false
 
 jobs:
@@ -28,15 +35,20 @@ jobs:
     runs-on: ubuntu-latest
     # A run that stalls before a runner is even assigned holds the concurrency
     # group, and GitHub then cancels every later run while it is still pending —
-    # which has twice left a merge unpublished until the next day's cron picked
-    # it up. A full run takes about three minutes, so this only ever fires on a
-    # stall, and a stalled run self-clears instead of blocking the queue.
+    # which has twice left a merge unpublished until the next cron picked it up.
+    # A full run takes a minute or two, so this only ever fires on a stall, and a
+    # stalled run self-clears instead of blocking the queue.
     timeout-minutes: 20
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, so the rebase below has a merge base to work from.
+          # It costs nothing here: the whole repo is ~18MB, most of which is the
+          # artwork a shallow checkout would fetch anyway.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -72,7 +84,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add artwork/artwork_small
-          git diff --cached --quiet || (git commit -m "Daily artwork additions" && git push)
+          if git diff --cached --quiet; then
+            echo "No new thumbs to commit."
+            exit 0
+          fi
+          git commit -m "Artwork additions"
+          # A merge landing on main mid-run makes this push a non-fast-forward
+          # and would fail the job with the refreshed database already uploaded.
+          # Nothing else in this job touches tracked files, so replaying the
+          # thumbs commit on top of whatever arrived is always safe.
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "Push rejected (attempt $attempt) — rebasing onto main and retrying."
+            git pull --rebase origin main
+          done
+          echo "Could not push artwork thumbs after 3 attempts."
+          exit 1
 
       - uses: actions/configure-pages@v5
 

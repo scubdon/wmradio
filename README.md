@@ -3,8 +3,8 @@
 **→ [scubdon.github.io/wmradio](https://scubdon.github.io/wmradio/)**
 
 (Almost) every song the in-store Walmart Radio stream has played since May 2024,
-logged minute by minute and refreshed daily — and what two years of it reveals
-about how the station is programmed.
+logged minute by minute and refreshed every eight hours — and what two years
+of it reveals about how the station is programmed.
 
 This is an independent, non-commercial record of a public broadcast, compiled by
 listening to the stream. Not affiliated with, sponsored by, or endorsed by
@@ -71,7 +71,7 @@ the stream's public metadata endpoint
   ▼
 gs://wmradio-metadata/plays/date=YYYY-MM-DD/*.json     one small object per play
   │
-  │  daily GitHub Action (.github/workflows/daily.yml)
+  │  GitHub Action every 8h (.github/workflows/refresh.yml)
   ▼
   download gs://wmradio-metadata/db/radio_plays.duckdb   ← canonical database
   scripts/update_duckdb.py     ingest new plays, dedupe
@@ -91,10 +91,10 @@ from it.
 ```
 dashboard/build.py        all the analysis: DuckDB → site/data/*.json
 dashboard/site/           the site itself — index.html, app.js, style.css
-scripts/update_duckdb.py  idempotent daily ingest from the bucket
+scripts/update_duckdb.py  idempotent ingest from the bucket
 scripts/fetch_artwork.py  artwork lookup, idempotent, misses recorded
 artwork/artwork_small/    150px thumbnails used by the site
-.github/workflows/        the daily refresh-and-deploy Action
+.github/workflows/        the refresh-and-deploy Action
 ```
 
 The front end is vanilla JavaScript over three pre-built JSON files — no
