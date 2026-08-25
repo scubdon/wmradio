@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Recently played at Walmart</title>
-<meta name="description" content="(Almost) every song played on the in-store Walmart Radio stream, logged minute-by-minute since May 2024 — and what two years of it reveals about how the station is programmed.">
+<meta name="description" content="(Almost) every song played on the in-store Walmart Radio stream, logged minute-by-minute since May 2024, and what two years of it reveals about how the station is programmed.">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
 </head>
@@ -37,9 +37,9 @@
       <div class="hero-text">
         <h1>Recently played at Walmart</h1>
         <p>(Almost) every song played on the in-store Walmart Radio stream, logged
-           minute-by-minute since May 2024 — the logger has dropped out a handful of
-           times, and those gaps are marked in the charts. Not affiliated with Walmart
-           — just a log of what the speakers are up to.</p>
+           minute-by-minute since May 2024. The logger has dropped out a handful of
+           times, and those gaps are marked in the charts. Not affiliated with Walmart,
+           just a log of what the speakers are up to.</p>
         <p class="statline" id="statLine">Loading…</p>
         <p class="fineprint" id="updatedLine"></p>
       </div>
@@ -85,7 +85,7 @@
 
   <section id="dailySection">
     <h2>Plays per day</h2>
-    <p class="sub">Full history. Shaded bands mark gaps where the logger was down — silence in the data, not in the stores.</p>
+    <p class="sub">Full history. Shaded bands mark gaps where the logger was down. The silence is in the data, not in the stores.</p>
     <div class="card">
       <div class="chart-wrap" id="dailyWrap"></div>
       <details class="tablewrap"><summary>Table view (monthly)</summary><div id="dailyTable"></div></details>
@@ -94,7 +94,7 @@
 
   <section id="wrappedSection">
     <h2>Your Walmart Radio</h2>
-    <p class="sub">Pick the hours you're in the store — working or wandering — and see what
+    <p class="sub">Pick the hours you're in the store, working or wandering, and see what
        the radio played at you. Times are your local time. Overnight shifts work too:
        pick something like 10:00p to 6:30a, and choose the days your shift <em>starts</em>.</p>
     <div class="card">
@@ -142,8 +142,8 @@
 
   <section id="rotationSection">
     <h2>The playlist, reverse-engineered</h2>
-    <p class="sub">Nobody publishes what's in rotation, so this works it out from the log alone —
-       no show names, no schedule, just the clock and <span id="rotPlayCount"></span> plays.</p>
+    <p class="sub">Nobody publishes what's in rotation, so this works it out from the log alone.
+       No show names, no schedule, just the clock and <span id="rotPlayCount"></span> plays.</p>
 
     <div class="card">
       <h3 class="cardtitle">What's in rotation right now</h3>
@@ -253,7 +253,7 @@
   <section id="browseSection">
     <h2>Browse everything</h2>
     <p class="sub">All <span id="browseCount"></span> of it. Search, filter by rotation
-       status, sort by any column — enough to answer questions the charts don't.</p>
+       status, and sort by any column. Enough to answer questions the charts don't.</p>
     <div class="card">
       <div class="filters">
         <input type="search" id="browseQ" placeholder="Search songs and artists…" autocomplete="off">
@@ -271,7 +271,7 @@
   <section id="dataSection">
     <h2>Use the data</h2>
     <p class="sub">The whole log is downloadable. It is the same file the charts on this
-       page are built from — no sampling, no aggregation.</p>
+       page are built from, with no sampling and no aggregation.</p>
     <div class="cols2">
       <div class="card">
         <h3 class="cardtitle">Download</h3>
@@ -280,7 +280,7 @@
         <table class="tbl dict">
           <tr><th>played_at_utc</th><td>Timestamp the track change was observed, UTC,
               second precision. ISO 8601 with an explicit <code>Z</code> in the CSV
-              (<code>2026-08-13T12:34:56Z</code>); a UTC-aware timestamp in the
+              (<code>2026-08-13T12:34:56Z</code>). A UTC-aware timestamp in the
               Parquet.</td></tr>
           <tr><th>artist</th><td>Artist string exactly as the stream reported it.
               Not normalised or deduplicated against MusicBrainz.</td></tr>
@@ -288,8 +288,8 @@
               “(Feat. …)” or remix credit.</td></tr>
         </table>
         <p class="sub">One row per play. Song identity is the
-           <code>(artist, song)</code> pair. Licensed as a plain factual record —
-           use it for whatever you like; a link back is appreciated.</p>
+           <code>(artist, song)</code> pair. Licensed as a plain factual record, so
+           use it for whatever you like. A link back is appreciated.</p>
       </div>
       <div class="card">
         <h3 class="cardtitle">Data coverage</h3>
@@ -307,23 +307,23 @@
 <div id="detail" hidden></div>
 
 <footer class="site">
-  <p>Want the data? Grab the full play log — one row per play, columns
-     <code>played_at_utc, artist, song</code> — as
+  <p>Want the data? Grab the full play log as
      <a href="data/plays.csv" download>CSV</a> or
      <a href="data/plays.parquet" download>Parquet</a>, with a
-     <a href="data/README.txt">data dictionary</a> alongside. Refreshed every
-     eight hours with the rest of the site; timestamps are UTC.
+     <a href="data/README.txt">data dictionary</a> alongside. One row per play,
+     columns <code>played_at_utc, artist, song</code>. Refreshed every eight
+     hours with the rest of the site. Timestamps are UTC.
      <a href="#dataSection">More about the dataset →</a></p>
   <p id="footGaps"></p>
   <p>Artwork via <a href="https://coverartarchive.org">Cover Art Archive</a> /
      <a href="https://musicbrainz.org">MusicBrainz</a> and album art from the stream's metadata.
-     Times recorded in UTC and shown in your browser's timezone, except the
-     day/night analysis, which uses Central time — the station's own clock.</p>
+     Times recorded in UTC and shown in your browser's timezone. The exception is
+     the day/night analysis, which uses Central time, the station's own clock.</p>
   <p>An independent, non-commercial record of a public broadcast, compiled by listening
      to the stream. Not affiliated with, sponsored by, or endorsed by Walmart. Album art
      remains the property of its respective rights holders and appears at thumbnail size
-     to illustrate the play data. Corrections and removal requests are welcome —
-     <a href="https://github.com/scubdon/wmradio/issues">open an issue</a>.</p>
+     to illustrate the play data. Corrections and removal requests are welcome.
+     <a href="https://github.com/scubdon/wmradio/issues">Open an issue</a>.</p>
 </footer>
 </div>
 

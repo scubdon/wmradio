@@ -281,13 +281,13 @@ function renderFindings() {
   const rec = META.recurrence;
   if (rec && rec.p1)
     items.splice(2, 0, [`${Math.round(rec.p1 / 60)} hours`,
-      "is the shortest the station will wait before playing a song again — its one hard rule",
+      "is the shortest the station will wait before playing a song again, its one hard rule",
       "#recurWrap"]);
   const sil = META.silence;
   if (sil && sil.shows) {
     const m = sil.shows.match;
     items.push([pct(m.show_hours_off / m.show_hours_total),
-      "of the station's live-show hours carry no music in the log — the grid lines up " +
+      "of the station's live-show hours carry no music in the log, and the grid lines up " +
       "with its published schedule", "#silenceWrap"]);
   }
   const wrap = $("#findings");
@@ -318,9 +318,9 @@ function renderRecent() {
     b.append(el("div", "t4", n7 > 1 ? `${n7}× this week` : "once this week"));
     const prev = PREV_SAME[i];
     b.title = prev >= 0
-      ? `${song} — ${artist}\nPreviously played ${fmtDur(T[i] - T[prev])} earlier · ` +
+      ? `${song} by ${artist}\nPreviously played ${fmtDur(T[i] - T[prev])} earlier · ` +
         `${n7} time${n7 === 1 ? "" : "s"} in the last 7 days`
-      : `${song} — ${artist}\nFirst time in the log`;
+      : `${song} by ${artist}\nFirst time in the log`;
     strip.append(b);
   }
 }
@@ -580,7 +580,7 @@ function renderWrapped() {
       `You would have heard “${SONGS[top[0][0]][1]}” about ${fmtInt(top[0][1])} times, and ` +
       `${topArtist} ${fmtInt(topRec.n)} times across ${k} of their songs.`;
   } else {
-    $("#wrapLede").textContent = "No plays logged in those hours — try widening the range.";
+    $("#wrapLede").textContent = "No plays logged in those hours. Try widening the range.";
   }
 
   renderWrapShows();
@@ -634,7 +634,7 @@ function renderWrapVersus(counts, total, start) {
     root.append(card("up", "Your shift's theme song", theme.sid,
       `${theme.ratio.toFixed(1)}× more often`,
       `${fmtInt(theme.n)} plays on your hours. The rest of the week hears it a fraction ` +
-      `as much — this one is yours.`));
+      `as much, so this one is yours.`));
 
   // The one you escaped: heavily played overall, hardly ever on your hours.
   // Ranked on how many plays you missed, so it is a song worth having missed.
@@ -670,10 +670,10 @@ function renderWrapVersus(counts, total, start) {
                `of your ${fmtInt(mineTop.size)} most-played songs are also in the top ` +
                `${fmtInt(restTop.size)} for the rest of the week. ` +
                (share > 0.8
-                 ? "Mostly the same station, then — your hours are not unusual ones."
+                 ? "Mostly the same station, then. Your hours are not unusual ones."
                  : share > 0.6
                    ? "A clear majority overlaps, but a real slice of your shift is its own thing."
-                   : "Less than two thirds — your hours really are a different station.")));
+                   : "Less than two thirds. Your hours really are a different station.")));
     root.append(d);
   }
 }
@@ -719,10 +719,10 @@ function renderWrapShows() {
 
   const totalH = mins.reduce((a, b) => a + b, 0) / 60;
   $("#wrapShowsSub").textContent = totalH
-    ? `About ${fmtInt(Math.round(totalH))} hours of live radio inside those hours — no music ` +
+    ? `About ${fmtInt(Math.round(totalH))} hours of live radio inside those hours. No music ` +
       `is logged during the shows, so none of it shows up in the counts above. Ended ` +
       `${META.silence.changeover}.`
-    : `None — the live shows ran until ${META.silence.changeover}, outside the window ` +
+    : `None. The live shows ran until ${META.silence.changeover}, outside the window ` +
       `you have picked, or outside the hours you work.`;
 
   const root = $("#wrapShows");
@@ -760,7 +760,7 @@ function renderWrapSkew(counts, total, start) {
 
   $("#wrapSkewSub").textContent = rows.length
     ? `How much more often your hours got each song than the rest of the week did. ` +
-      `Anything near 1× is just the station; the top of this list is your shift.`
+      `Anything near 1× is just the station. The top of this list is your shift.`
     : `Not enough plays in those hours to compare against the rest of the week.`;
 
   renderRankList(root, rows.slice(0, 8).map(r => ({
@@ -870,7 +870,7 @@ function renderDayView() {
   }
   if (!idx.length) {
     $("#daySummary").replaceChildren();
-    list.append(el("p", "sub", "No plays recorded on this date — likely a logger gap."));
+    list.append(el("p", "sub", "No plays recorded on this date. Likely a logger gap."));
     return;
   }
 
@@ -889,7 +889,7 @@ function renderDayView() {
         quiet++;
         const sched = scheduledBreak(prev, T[i]);
         list.append(el("div", "daygap", `${fmtDur(gap)} with nothing logged`
-          + (sched ? ` — ${sched}` : "")));
+          + (sched ? ` (${sched})` : "")));
       }
     }
 
@@ -974,13 +974,13 @@ function renderRotation() {
     rows.append(row);
   }
   $("#rotationNote").textContent =
-    `Nothing here is announced — it's inferred from play counts. A song crossing from ` +
-    `“Occasional” to “Regular” is the station adding it to rotation; the reverse is it being retired.`;
+    `Nothing here is announced. It is inferred from play counts. A song crossing from ` +
+    `“Occasional” to “Regular” is the station adding it to rotation, and the reverse is it being retired.`;
 
   methodology($("#methRotation"), [
     ["What counts as “in rotation”",
      `A song is in the rotation pool if it was played at least ${rot.min_plays} times in the ` +
-     `trailing ${rot.window_days} days. That's it — no smoothing, no decay, no manual list. ` +
+     `trailing ${rot.window_days} days. That's it. No smoothing, no decay, no manual list. ` +
      `${rot.window_days} days is long enough that a genuinely light-rotation track still ` +
      `clears the bar, and short enough to react when the station changes its mind.`],
     ["Where the tier boundaries come from",
@@ -991,12 +991,12 @@ function renderRotation() {
      `The same ${rot.min_plays}-play test is applied to the previous ${rot.window_days}-day ` +
      `window and the two pools are compared. Applying it symmetrically matters: a one-sided ` +
      `test would count every song whose count merely wobbled across the threshold. ` +
-     `“Just added” is not the same as new — a catalogue track returning after a year away ` +
+     `“Just added” is not the same as new. A catalogue track returning after a year away ` +
      `enters the pool exactly like a current single does.`],
     ["What this can't tell you",
      `Nothing here uses show names, the published schedule, or any Walmart-supplied ` +
      `metadata, because none of it can be verified against the log. These are observed ` +
-     `play frequencies, and “rotation” is the most economical explanation for them — ` +
+     `play frequencies, and “rotation” is the most economical explanation for them, ` +
      `not a document anyone published.`],
   ]);
 
@@ -1015,8 +1015,8 @@ function renderRotation() {
     `around the clock, almost every song would sit near that mark. Instead, of the ` +
     `${fmtInt(dn.n_tested)} songs played at least ${dn.min_plays} times in the last ` +
     `${dn.window_days} days, ${fmtInt(dn.n_night)} skew significantly to the night and ` +
-    `${fmtInt(dn.n_day)} to the day — chance alone would produce about ${dn.expected} of each. ` +
-    `The overnight pool leans dance, remix and indie; the daytime pool leans country and 80s pop.`;
+    `${fmtInt(dn.n_day)} to the day. Chance alone would produce about ${dn.expected} of each. ` +
+    `The overnight pool leans dance, remix and indie. The daytime pool leans country and 80s pop.`;
   const share = r => ({ sid: r[0], n: r[2], t1: SONGS[r[0]][1],
                         t2: `${SONGS[r[0]][0]} · ${r[1]} plays`,
                         art: SONGS[r[0]][2], nLabel: pct(r[2]) });
@@ -1025,7 +1025,7 @@ function renderRotation() {
     ({ ...share(r), n: 1 - r[2], nLabel: pct(1 - r[2]) })), { max: 1 });
   $("#dnFoot").textContent =
     `Percentages are each song's share of plays falling in its column's hours. Songs at 0% ` +
-    `overnight across 20-plus plays aren't a coincidence — they're never scheduled after dark.`;
+    `overnight across 20-plus plays aren't a coincidence. They are never scheduled after dark.`;
 
   methodology($("#methDayNight"), [
     ["Why Central time",
@@ -1038,9 +1038,9 @@ function renderRotation() {
      `gets the share of its plays that landed at night, compared against the station-wide ` +
      `share of ${pct(dn.baseline)} with a normal-approximation z-test. Songs past ±2 are ` +
      `counted as skewed, which by construction misfires on about 2.3% of songs in each ` +
-     `direction — hence the ${dn.expected}-per-side figure that chance would give.`],
+     `direction. That is where the ${dn.expected}-per-side figure comes from.`],
     ["Why this is evidence of separate pools",
-     `Not the individual songs — the spread. If one playlist ran around the clock, the ` +
+     `Not the individual songs, but the spread. If one playlist ran around the clock, the ` +
      `z-scores would have a standard deviation near 1. It is ${dn.z_sd}. Something is ` +
      `partitioning the catalogue by time of day.`],
   ]);
@@ -1059,8 +1059,8 @@ function renderRecurrence() {
   const shortH = m => m < 1440 ? `${Math.round(m / 60)}h` : `${(m / 1440).toFixed(1)}d`;
 
   $("#recurSub").textContent =
-    `Every gap between one play of a song and its next, over the last ${r.window_days} days — ` +
-    `${fmtInt(r.n_gaps)} of them across ${fmtInt(r.n_songs)} songs. The station's one hard rule ` +
+    `Every gap between one play of a song and its next, over the last ${r.window_days} days. ` +
+    `That is ${fmtInt(r.n_gaps)} of them across ${fmtInt(r.n_songs)} songs. The station's one hard rule ` +
     `is on the left of this chart: almost nothing comes back inside ${shortH(r.p1)}. ` +
     `Half of all repeats wait ${hrs(r.p50)} or more.`;
 
@@ -1116,7 +1116,7 @@ function renderRecurrence() {
   if (floorX != null) {
     svg.append(svgEl("line", { x1: floorX, x2: floorX, y1: top, y2: top + ih,
       stroke: "var(--baseline)", "stroke-width": 1.2, "stroke-dasharray": "4 3" }));
-    svg.append(svgText(floorX + 5, top + 12, `${shortH(r.p1)} — nothing repeats sooner`, "start"));
+    svg.append(svgText(floorX + 5, top + 12, `${shortH(r.p1)}: nothing repeats sooner`, "start"));
   }
   svg.append(svgText(left, H - 8, "time until the same song plays again", "start"));
   $("#recurWrap").replaceChildren(svg);
@@ -1127,15 +1127,15 @@ function renderRecurrence() {
   const clocked = r.cv_steadier / Math.max(1, r.cv_n);
   $("#recurFoot").textContent = r.cv_obs == null ? "" :
     `Above that floor, though, there is no clock. Give each song the same number of plays ` +
-    `and drop them at random through the window — allowing only the same minimum gap — and ` +
+    `and drop them at random through the window, allowing only the same minimum gap, and ` +
     `the made-up schedule is about as even as the real one ` +
-    `(${r.cv_null.toFixed(2)} against ${r.cv_obs.toFixed(2)}; a coin-flip process scores 1.0). ` +
+    `(${r.cv_null.toFixed(2)} against ${r.cv_obs.toFixed(2)}, where a coin-flip process scores 1.0). ` +
     (clocked > 0.62
       ? `${pct(clocked)} of songs are steadier than their own random twin, which is more than ` +
-        `chance would give — something clock-like may be creeping in.`
+        `chance would give, so something clock-like may be creeping in.`
       : `${pct(clocked)} of songs come out steadier than their own random twin, and chance ` +
         `alone would give about half. So this is a shuffle with a cooling-off period, not a ` +
-        `rotation clock — the station picks what to play next, not when to play it again.`);
+        `rotation clock. The station picks what to play next, not when to play it again.`);
 
   const bandRoot = $("#recurBands");
   bandRoot.replaceChildren();
@@ -1165,7 +1165,7 @@ function renderRecurrence() {
   methodology($("#methRecur"), [
     ["What is being measured",
      `For every song played at least ${r.min_plays} times in the last ${r.window_days} days, ` +
-     `the gap between each play and the next. Not an average wait — the whole distribution, ` +
+     `the gap between each play and the next. Not an average wait, but the whole distribution, ` +
      `because an average hides the thing worth seeing. A song played twice a day for a week ` +
      `and then dropped has the same average as one played steadily all month.`],
     ["The floor, and why it is the interesting part",
@@ -1176,12 +1176,12 @@ function renderRecurrence() {
     ["The test for a rotation clock",
      `Each song is compared against itself: same play count, same window, but with the plays ` +
      `dropped at random subject to the same minimum gap. The comparison is the coefficient of ` +
-     `variation of the gaps — 0 is clockwork, 1 is memoryless. Real songs score ${r.cv_obs}; ` +
-     `their random twins score ${r.cv_null}, over ${fmtInt(r.cv_n)} songs with at least ` +
+     `variation of the gaps, where 0 is clockwork and 1 is memoryless. Real songs score ` +
+     `${r.cv_obs} and their random twins ${r.cv_null}, over ${fmtInt(r.cv_n)} songs with at least ` +
      `${r.cv_min_plays} plays. The floor is granted to the random version at its loosest ` +
      `reading, so any genuine regularity has the best chance of showing.`],
     ["What this can't tell you",
-     `Nothing about *why* a song is picked — the pool is clearly weighted, and this says ` +
+     `Nothing about *why* a song is picked. The pool is clearly weighted, and this says ` +
      `nothing about the weights. And an hour with no music is still an hour: during the years ` +
      `the live-show grid was running, roughly five hours a day carried none, which stretches ` +
      `some gaps for reasons that have nothing to do with the song.`],
@@ -1228,8 +1228,8 @@ function renderTurnover() {
 
   const label = turnoverBack === 365 ? "a year ago" : `${turnoverBack} days ago`;
   $("#turnoverSub").textContent =
-    `The rotation pool as it stands against the pool ${label} — the same ` +
-    `${META.rotation.min_plays}-plays-in-${META.rotation.window_days}-days test applied at ` +
+    `The rotation pool as it stands against the pool ${label}, using the same ` +
+    `${META.rotation.min_plays}-plays-in-${META.rotation.window_days}-days test at ` +
     `both dates. How often does Walmart actually change its playlist?`;
 
   const root = $("#turnoverStats");
@@ -1255,12 +1255,12 @@ function renderTurnover() {
   const growth = (now.size - then.size) / Math.max(1, then.size);
   $("#turnoverFoot").textContent =
     `${pct(overlap)} of the two pools is shared. The pool itself went from ` +
-    `${fmtInt(then.size)} songs to ${fmtInt(now.size)} — ` +
+    `${fmtInt(then.size)} songs to ${fmtInt(now.size)}, ` +
     (Math.abs(growth) < 0.05
       ? `essentially flat, so this is the station swapping tracks, not stocking up.`
       : growth > 0
-        ? `${pct(growth)} bigger, so it is both widening the pool and cycling through it.`
-        : `${pct(-growth)} smaller, so it is tightening the pool as well as cycling it.`);
+        ? `which is ${pct(growth)} bigger, so it is both widening the pool and cycling through it.`
+        : `which is ${pct(-growth)} smaller, so it is tightening the pool as well as cycling it.`);
 }
 
 // ---------- the live shows and their daily grid ----------
@@ -1286,8 +1286,8 @@ function renderSilence() {
     `the ${andList(hrs)} hour${hrs.length > 1 ? "s" : ""} ` +
     `${days === "every day" ? days : "on " + days}`).join(", plus ");
   $("#silenceSub").textContent =
-    `For ${fmtInt(b.days)} days the station ran three live shows on a fixed daily grid — ` +
-    `${andList(sh.names)} — taking about ${b.silent_hours_per_day} hours out of every 24: ` +
+    `For ${fmtInt(b.days)} days the station ran three live shows on a fixed daily grid, ` +
+    `${andList(sh.names)}, taking about ${b.silent_hours_per_day} hours out of every 24: ` +
     `${blockText}, on Central time. The slots come from the station's own published ` +
     `schedule, down to the morning show running two hours on weekdays and one at ` +
     `weekends. The grid below shows them against the music log.`;
@@ -1340,7 +1340,7 @@ function renderSilence() {
   if (a) {
     const y = top + 7 * ch + gap;
     svg.append(svgText(left - 6, y + ch / 2 + 4, "Now", "end"));
-    svg.append(svgText(left, y - 10, `Since ${a.from} — every day, all seven`, "start"));
+    svg.append(svgText(left, y - 10, `Since ${a.from}: every day, all seven`, "start"));
     for (let h = 0; h < 24; h++) {
       let sil = 0, plays = 0;
       for (let d = 0; d < 7; d++) { sil += a.grid[d][h] || 0; plays += a.plays[d][h] || 0; }
@@ -1381,9 +1381,9 @@ function renderSilence() {
 
   $("#silenceFoot").textContent = a
     ? `The grid stopped on ${s.changeover}. Since then the stream has run songs through ` +
-      `all 24 hours, seven days a week — ${fmtInt(a.plays_per_day)} plays a day against ` +
+      `all 24 hours, seven days a week, at ${fmtInt(a.plays_per_day)} plays a day against ` +
       `${fmtInt(b.plays_per_day)} before. Whether the shows ended or simply stopped being ` +
-      `carried on this stream, the log cannot say; the station stopped publishing the ` +
+      `carried on this stream, the log cannot say. The station stopped publishing the ` +
       `schedule too.`
     : `The grid is still in force.`;
 
@@ -1404,7 +1404,7 @@ function renderSilence() {
      `fall at no particular time of day, and most of them last more than a day. The two are ` +
      `counted separately throughout the site.`],
     ["Which hours and days count",
-     `An hour counts as carrying no music if it logged at most two track changes — not zero, ` +
+     `An hour counts as carrying no music if it logged at most two track changes, not zero, ` +
      `because a song starting just before the top of the hour still lands one row inside it. ` +
      `The split is not a close call: inside a show slot an hour logs nought to three changes ` +
      `or it logs twelve and up, with nothing in between. Days the logger missed any part of ` +
@@ -1412,7 +1412,7 @@ function renderSilence() {
      `${fmtInt(b.days)} clean days before the change and ${a ? fmtInt(a.days) : 0} after.`],
     ["What it still can't tell you",
      `Nothing about what was said or played during the shows, and nothing about the music ` +
-     `blocks the same schedule lists — including the 8–10a Sensory Hours, which report track ` +
+     `blocks the same schedule lists, including the 8–10a Sensory Hours, which report track ` +
      `changes exactly like any other hour and so leave no trace here at all. If stores lower ` +
      `or mute their own speakers, one shared stream looks identical either way, and this log ` +
      `cannot see it.`],
@@ -1684,14 +1684,14 @@ function renderDataSection() {
   methodology($("#coverageNote"), [
     ["How coverage is measured",
      `The share of clock hours between the first and last play in which the logger recorded ` +
-     `anything — a song, or one of the markers the early metadata source emitted for a live ` +
-     `show or an advert. ${fmtInt(c.covered_hours)} of ${fmtInt(c.span_hours)} hours qualify. ` +
-     `Songs on their own reach ${pct(c.song_uptime)}; the ${fmtInt(c.n_events)} show and advert markers ` +
+     `anything, whether a song or one of the markers the early metadata source emitted for a ` +
+     `live show or an advert. ${fmtInt(c.covered_hours)} of ${fmtInt(c.span_hours)} hours qualify. ` +
+     `Songs on their own reach ${pct(c.song_uptime)}. The ${fmtInt(c.n_events)} show and advert markers ` +
      `account for a further ${fmtInt(c.event_hours)} hours that would otherwise read as unobserved.`],
     ["Where the rest of the time went",
      `Two different things, counted separately rather than bundled into one downtime figure. ` +
      `${fmtInt(c.n_outages)} outages totalling ${fmtInt(c.outage_hours)} hours, the longest ` +
-     `${fmtInt(c.longest_outage_hours)} hours, are the logger failing — nothing at all was ` +
+     `${fmtInt(c.longest_outage_hours)} hours, are the logger failing, with nothing at all ` +
      `recorded. The other ${fmtInt(c.n_quiet)} stretches, about ${fmtInt(c.quiet_hours)} hours, ` +
      `are the stream up but not reporting a song.`],
     ["Why the shows only show up for the first two years",
@@ -1700,11 +1700,11 @@ function renderDataSection() {
      (sil && sil.changeover ? `, and how the grid below was confirmed` : "") + `. ` +
      `On 2025-07-24 the source changed to one that reports only artist and title, so from that ` +
      `date the shows leave no trace whatever. Their hours after it are genuinely unobserved, ` +
-     `not empty — which is a limit of the logger, not a fact about the station.`],
+     `not empty, which is a limit of the logger rather than a fact about the station.`],
     ["What that means for the file",
      `Play counts are lower bounds. A hole in a song's history is usually the station's ` +
-     `schedule, occasionally ours — check anything that compares two periods against the ` +
-     `outage list below` +
+     `schedule and occasionally ours, so check anything that compares two periods against ` +
+     `the outage list below` +
      (sil && sil.changeover
        ? `, and bear in mind the grid lifted on ${sil.changeover}, so hours that carried no ` +
          `music for the first two years are full of it now`
@@ -1731,7 +1731,7 @@ function renderFooter() {
   $("#footGaps").textContent =
     `Data completeness: ${g.length} recording gaps (logger downtime): ${g.join(" · ")}. ` +
     (s && s.changeover
-      ? `Shorter stretches with no music are not logger downtime — until ${s.changeover} the ` +
+      ? `Shorter stretches with no music are not logger downtime. Until ${s.changeover} the ` +
         `station ran a fixed daily grid of live shows. `
       : "") +
     `The weeks before Christmas skew heavily to holiday music.`;
@@ -1858,13 +1858,13 @@ function songPage(sid) {
   if (sorted.length >= 12) page.append(gapCard(sorted));
 
   page.append(scatterCard(sc.times, "Every play, one dot",
-    "Date across, time of day down. Vertical bands are days it was hammered; a " +
+    "Date across, time of day down. Vertical bands are days it was hammered. A " +
     "dot sitting high or low the whole way across means it only ever gets " +
     "scheduled at that time."));
 
   page.append(calendarCard(sc.times, "Every day it played",
-    "One square per day since logging began. Solid runs are spells in rotation; " +
-    "blank runs are the song sitting out."));
+    "One square per day since logging began. Solid runs are spells in rotation, " +
+    "and blank runs are the song sitting out."));
   page.append(chartCard("Plays per month", monthChart(sc.byMonth),
     "Every month since logging began. Flat stretches are gaps in the log, not the station."));
   page.append(twoUp(
@@ -1884,7 +1884,7 @@ function songPage(sid) {
     card.append(list);
     page.append(card);
   }
-  document.title = `${song} — ${artist} · Recently played at Walmart`;
+  document.title = `${song} by ${artist} · Recently played at Walmart`;
   return page;
 }
 
@@ -1932,7 +1932,7 @@ function artistPage(name) {
   page.append(card);
 
   page.append(scatterCard(sc.times, "Every play, one dot",
-    `Date across, time of day down — every ${name} play in the log.`));
+    `Date across, time of day down, with every ${name} play in the log.`));
   page.append(calendarCard(sc.times, "Every day they played",
     `One square per day since logging began, counting all ${fmtInt(ids.length)} ` +
     `song${ids.length > 1 ? "s" : ""}.`));

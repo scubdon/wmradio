@@ -443,7 +443,7 @@ def write_data_readme(meta):
     gaps = "\n".join(f"  {a}  to  {b}" for a, b in meta["gaps"]) or "  (none)"
     grid = (f"""
 Until {sil['changeover']} the station ran three live talk shows on fixed daily
-slots — about {sil['before']['silent_hours_per_day']} hours out of every 24, always the same
+slots, about {sil['before']['silent_hours_per_day']} hours out of every 24, always the same
 Central-time hours, matching its own published schedule. The log carries no
 music inside them. Since {sil['changeover']} it has run
 music through all 24 hours. If you compare two periods either side of that
@@ -483,14 +483,14 @@ capitalisation and featured-artist credits are reproduced, not cleaned.
 
 The timestamp is when the change was *observed*, within about a minute of when
 it happened. It is not the track's start time as the station would report it,
-and there is no duration column — the gap to the next row is the closest thing,
+and there is no duration column. The gap to the next row is the closest thing,
 and it is wrong wherever a gap intervenes.
 
 What is missing, and why it matters
 -----------------------------------
 Play counts are lower bounds. {pct_str(c['uptime'])} of the clock hours in the span contain
-something the logger recorded — a song, or one of the live-show and advert
-markers described below. Songs alone account for {pct_str(c['song_uptime'])}; the markers
+something the logger recorded, whether a song or one of the live-show and advert
+markers described below. Songs alone account for {pct_str(c['song_uptime'])}, and the markers
 cover a further {c['event_hours']:,} hours that would otherwise look unobserved. The
 remainder splits into two kinds of gap, and they are not the same thing:
 
@@ -498,7 +498,7 @@ remainder splits into two kinds of gap, and they are not the same thing:
                     Nothing at all was recorded. This is us failing, and it
                     is listed in full below.
   Station quiet     {c['n_quiet']:,} shorter blocks with no music, about {c['quiet_hours']:,} hours. The
-                    stream was up; it just was not reporting a song.
+                    stream was up. It just was not reporting a song.
 {grid}
 Do not bundle the two into one "downtime" figure.
 
@@ -506,14 +506,14 @@ A note on the live shows. For the first two years the station ran three live
 talk shows on a fixed Central-time grid, and the early metadata source named
 them: {c['n_shows']:,} show blocks and {c['n_promos']:,} adverts are in the dataset because of it.
 The source changed on 2025-07-24 to one that reports only artist and title, so
-from that date the shows leave no trace at all — their hours are genuinely
+from that date the shows leave no trace at all, so their hours are genuinely
 unobserved rather than empty. Any comparison spanning that date is comparing
 two different loggers.
 
 Logger outages
 --------------
 Whole days with no plays at all. Partial-day outages exist too and are not
-listed here; if precision matters, read gaps of six hours or more off the play
+listed here. If precision matters, read gaps of six hours or more off the play
 sequence itself.
 
 {gaps}
@@ -521,8 +521,8 @@ sequence itself.
 Provenance and reuse
 --------------------
 An independent, non-commercial record of a public broadcast. Not affiliated
-with, sponsored by, or endorsed by Walmart. The log is factual observation —
-use it for whatever you like; a link back is appreciated.
+with, sponsored by, or endorsed by Walmart. The log is factual observation, so
+use it for whatever you like. A link back is appreciated.
 
   Site        https://scubdon.github.io/wmradio/
   Source      https://github.com/scubdon/wmradio
@@ -756,7 +756,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         FROM plays GROUP BY 1 ORDER BY n DESC, artist LIMIT 1
     """).fetchone()
     out.append(rec("top_song", "Most-played song ever", f"{songs[0][3]:,} plays",
-                   f"{songs[0][1]} — {songs[0][0]}", sid=0))
+                   f"{songs[0][1]} by {songs[0][0]}", sid=0))
     out.append(rec("top_artist", "Most-played artist ever", f"{artist_plays:,} plays",
                    f"{top_artist} · {artist_songs} songs in the log", artist=top_artist))
 
@@ -765,7 +765,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         GROUP BY 1 ORDER BY k DESC, artist LIMIT 1
     """).fetchone()
     out.append(rec("widest_artist", "Most different songs by one artist", f"{wide[1]} songs",
-                   f"{wide[0]} — everything they have ever had played",
+                   f"{wide[0]} · everything they have ever had played",
                    artist=wide[0]))
 
     # --- single-day extremes ---------------------------------------------
@@ -774,14 +774,14 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         GROUP BY 1,2,3 ORDER BY n DESC, 3, artist, song LIMIT 1
     """).fetchone()
     out.append(rec("song_day", "Most plays of one song in a day", f"{d[3]}×",
-                   f"{d[1]} — {d[0]}, on {d[2]}", sid=sid_of(d[0], d[1])))
+                   f"{d[1]} by {d[0]}, on {d[2]}", sid=sid_of(d[0], d[1])))
 
     d = con.execute("""
         SELECT artist, date_local::VARCHAR, count(*) n, count(DISTINCT song) k
         FROM plays GROUP BY 1,2 ORDER BY n DESC, 2, artist LIMIT 1
     """).fetchone()
     out.append(rec("artist_day", "Most airtime for one artist in a day", f"{d[2]} plays",
-                   f"{d[0]} — {d[3]} different songs, on {d[1]}", artist=d[0]))
+                   f"{d[0]} · {d[3]} different songs, on {d[1]}", artist=d[0]))
 
     # --- seasonality, derived rather than keyword-matched -----------------
     mo, day = SEASON_START
@@ -798,7 +798,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
     if season:
         out.append(rec("seasonal", "Most relentlessly seasonal song",
                        f"{round(season[3] * 100)}% in December",
-                       f"{season[1]} — {season[0]}, {season[2]:,} plays, almost all of "
+                       f"{season[1]} by {season[0]}, {season[2]:,} plays, almost all of "
                        f"them after mid-November", sid=sid_of(season[0], season[1])))
 
     # --- gap-based records, one pass over the per-song play times ---------
@@ -863,17 +863,17 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         sid, gap, when = best_short
         out.append(rec("short_gap", "Shortest gap between repeats",
                        f"{gap // 60}h {gap % 60}m" if gap >= 60 else f"{gap} min",
-                       f"{songs[sid][1]} — {songs[sid][0]}, twice on {fmt_day(when)}",
+                       f"{songs[sid][1]} by {songs[sid][0]}, twice on {fmt_day(when)}",
                        sid=sid))
     if best_burst:
         sid, n, when = best_burst
         out.append(rec("burst", "Most plays of one song in 24 hours", f"{n}×",
-                       f"{songs[sid][1]} — {songs[sid][0]}, ending {fmt_day(when)}",
+                       f"{songs[sid][1]} by {songs[sid][0]}, ending {fmt_day(when)}",
                        sid=sid))
     if best_streak:
         sid, n, when = best_streak
         out.append(rec("streak", "Longest run of consecutive days played", f"{n} days",
-                       f"{songs[sid][1]} — {songs[sid][0]}, through {fmt_day(when)}",
+                       f"{songs[sid][1]} by {songs[sid][0]}, through {fmt_day(when)}",
                        sid=sid))
     if best_return:
         sid, gap, when, raw = best_return
@@ -884,8 +884,8 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         lost = round((raw - gap) / 1440)
         out.append(rec("return", "Longest disappearance before coming back",
                        f"{round(gap / 1440)} days",
-                       f"{songs[sid][1]} — {songs[sid][0]} resurfaced on {fmt_day(when)}. "
-                       f"{round(raw / 1440):,} days passed in all; "
+                       f"{songs[sid][1]} by {songs[sid][0]} resurfaced on {fmt_day(when)}. "
+                       f"{round(raw / 1440):,} days passed in all, and "
                        + (f"{lost:,} of them fall inside logger outages and are not counted."
                           if lost else "the logger was up for all of it."), sid=sid))
 
@@ -897,7 +897,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         sid, a, b, n = span_best
         out.append(rec("longest_active", "Longest-serving song",
                        f"{round((b - a) / 1440)} days",
-                       f"{songs[sid][1]} — {songs[sid][0]}, {n:,} plays from "
+                       f"{songs[sid][1]} by {songs[sid][0]}, {n:,} plays from "
                        f"{fmt_day(a)} to {fmt_day(b)}", sid=sid))
 
     # --- who owns the current rotation ------------------------------------
@@ -907,7 +907,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         # happened to yield first; sort the name in as a tiebreaker instead.
         name, k = min(pool_artists.items(), key=lambda kv: (-kv[1], kv[0]))
         out.append(rec("pool_artist", "Most songs in rotation right now", f"{k} songs",
-                       f"{name} — of the {len(pool_ids):,} titles currently in rotation",
+                       f"{name}, of the {len(pool_ids):,} titles currently in rotation",
                        artist=name))
 
     # --- longest stretch with nothing repeated ----------------------------
@@ -951,7 +951,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         FROM plays GROUP BY 1 ORDER BY n DESC, 1 LIMIT 1
     """).fetchone()
     out.append(rec("busiest", "Busiest day the station has had", f"{d[1]} plays",
-                   f"{d[0]} — {d[2]} different songs, one every "
+                   f"{d[0]} · {d[2]} different songs, one every "
                    f"{round(1440 / d[1] * 10) / 10:g} minutes"))
 
     d = con.execute("""
@@ -959,7 +959,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         FROM plays GROUP BY 1 ORDER BY k DESC LIMIT 1
     """).fetchone()
     out.append(rec("widest_day", "Most different songs in one day", f"{d[1]} songs",
-                   f"{d[0]} — {d[2]} plays, and only "
+                   f"{d[0]} · {d[2]} plays, and only "
                    f"{d[2] - d[1]} of them a repeat"))
 
     # The opposite extreme, and the one that catches the holiday run: a full
@@ -974,7 +974,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
     if d:
         out.append(rec("narrowest_day", "Least varied day the station has had",
                        f"{d[1]} songs, {d[2]} plays",
-                       f"{d[0]} — every title came round {round(d[2] / d[1], 1)} times "
+                       f"{d[0]} · every title came round {round(d[2] / d[1], 1)} times "
                        f"that day, against {round(d[3], 1)} on a typical one"))
 
     # First heard *since* the opening weeks, which are all debuts by definition.
@@ -1002,7 +1002,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
     """).fetchone()
     if once and once[0]:
         out.append(rec("once", "Songs played exactly once, ever", f"{once[0]} songs",
-                       f"the most recent was {once[2]} — {once[1]}, on {once[3]}",
+                       f"the most recent was {once[2]} by {once[1]}, on {once[3]}",
                        sid=sid_of(once[1], once[2])))
 
     # --- tied to a single hour of the day ---------------------------------
@@ -1023,7 +1023,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
         artist, song, h, k, n = ck
         out.append(rec("clockbound", "Most clock-bound song",
                        f"{round(k / n * 100)}% in one hour",
-                       f"{song} — {artist}, {k} of its {n} plays between "
+                       f"{song} by {artist}, {k} of its {n} plays between "
                        f"{h}:00 and {h + 1}:00 Central", sid=sid_of(artist, song)))
 
     # --- when the holiday takeover starts ---------------------------------
@@ -1066,7 +1066,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
             hrs = lambda m: f"{m / 60:.1f}h"
             out.append(rec("metronome", "The song that keeps the best time",
                            f"every {hrs(med)}",
-                           f"{songs[sid][1]} — {songs[sid][0]}, {n} plays in the last "
+                           f"{songs[sid][1]} by {songs[sid][0]}, {n} plays in the last "
                            f"{ROTATION_WINDOW_DAYS} days and half of its waits between "
                            f"{hrs(q1)} and {hrs(q3)}", sid=sid))
 
