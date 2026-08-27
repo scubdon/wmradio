@@ -3,8 +3,7 @@
 **→ [scubdon.github.io/wmradio](https://scubdon.github.io/wmradio/)**
 
 (Almost) every song the in-store Walmart Radio stream has played since May 2024,
-logged minute by minute and refreshed every eight hours — and what two years
-of it reveals about how the station is programmed.
+logged minute by minute and refreshed every eight hours.
 
 This is an independent, non-commercial record of a public broadcast, compiled by
 listening to the stream. Not affiliated with, sponsored by, or endorsed by
@@ -22,9 +21,6 @@ The whole log is published with the site, regenerated on every build:
 | [`plays.parquet`](https://scubdon.github.io/wmradio/data/plays.parquet) | one per play | zstd-compressed, typed timestamps |
 | [`README.txt`](https://scubdon.github.io/wmradio/data/README.txt) | — | data dictionary, coverage and outage list |
 
-Three columns, and no sampling or aggregation — it is the same file the charts
-are built from:
-
 - **`played_at_utc`** — when the track change was observed. UTC, second
   precision. ISO 8601 with an explicit `Z` in the CSV
   (`2026-08-13T12:34:56Z`); a UTC-aware timestamp in the Parquet.
@@ -34,14 +30,7 @@ are built from:
 
 Song identity is the `(artist, song)` pair.
 
-Play counts are lower bounds. About 75% of the clock
-hours in the span contain at least one logged play; most of the rest is the
-live-show grid rather than the logger. Until April 2026 the station ran three
-live shows on fixed daily slots (see below), and there are a couple of dozen
-genuine logger outages on top of that. The site's
-[Use the data](https://scubdon.github.io/wmradio/#dataSection) section lists
-every outage and explains how coverage is measured — check anything that
-compares two time periods against it.
+Play counts are lower bounds. About 75% of the clock hours in the span contain at least one logged play; most of the rest is the live-show grid rather than the logger. Until April 2026 the station ran three live shows on fixed daily slots (see below), and there are a couple of dozen genuine logger outages on top of that. The site's [Use the data](https://scubdon.github.io/wmradio/#dataSection) section lists every outage and explains how coverage is measured.
 
 ## What the site works out
 
@@ -66,8 +55,8 @@ panel stating its thresholds and what it can't tell you.
 
 ## Credits
 
-Artwork via the [Cover Art Archive](https://coverartarchive.org) and
-[MusicBrainz](https://musicbrainz.org), and from the stream's own metadata.
+Song titles, artist names, and artwork via the [Cover Art Archive](https://coverartarchive.org),
+[MusicBrainz](https://musicbrainz.org), and from the [stream's own metadata](https://streams.radiomast.io/2ce0b08d-2fe6-42a1-b64a-9f0a682f5508/metadata).
 Album art remains the property of its respective rights holders and appears at
 thumbnail size to illustrate the play data.
 
