@@ -38,6 +38,7 @@ const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numer
 const shortDateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 const dtFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit" });
+const monthPickFmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // A day key is the epoch-day number of a *local* calendar date. Reading one
@@ -75,7 +76,21 @@ const URLSTATE = {
     set: v => { wrapState.days = new Set([...v].map(Number).filter(d => d >= 0 && d < 7)); },
     def: "01234",
   },
-  over: { get: () => wrapState.range, set: v => { wrapState.range = +v; }, def: 365 },
+  // One param covers both shapes of the wrapped range: a day count, or the two
+  // inclusive "YYYY-MM" bounds of a custom range. Links made before custom
+  // ranges existed still read as day counts, so none of them break.
+  over: {
+    get: () => wrapState.range === "custom"
+      ? `${wrapState.mFrom}:${wrapState.mTo}` : wrapState.range,
+    set: v => {
+      if (!v.includes(":")) { wrapState.range = +v; return; }
+      const [a, b] = v.split(":");
+      if (MONTH_RE.test(a) && MONTH_RE.test(b)) {
+        wrapState.range = "custom"; wrapState.mFrom = a; wrapState.mTo = b;
+      }
+    },
+    def: 365,
+  },
   back: { get: () => turnoverBack, set: v => { turnoverBack = +v; }, def: 30 },
   // The day view defaults to the last logged day, so only a date the reader
   // actually navigated to is worth putting in the URL.
@@ -498,7 +513,48 @@ function dayKeyOf(iso) {
 // ---------- personal wrapped ----------
 // from/to are half-hour slots (0–47). A "to" earlier than "from" wraps past
 // midnight; the post-midnight tail is attributed to the day the shift started.
-const wrapState = { days: new Set([0, 1, 2, 3, 4]), from: 18, to: 34, range: 365 };
+// `range` is a trailing day count (0 = all time) or the string "custom", in
+// which case mFrom/mTo are the inclusive "YYYY-MM" bounds of the window.
+const wrapState = { days: new Set([0, 1, 2, 3, 4]), from: 18, to: 34, range: 365,
+                    mFrom: null, mTo: null };
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const monthKeyOf = ms => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+// Month bounds are read in local time, like LSLOT and LDOW, so "March" means
+// the reader's March rather than a UTC one shifted by their offset.
+const monthStartMs = k => { const [y, m] = k.split("-").map(Number); return new Date(y, m - 1, 1).getTime(); };
+const monthAfterMs = k => { const [y, m] = k.split("-").map(Number); return new Date(y, m, 1).getTime(); };
+const monthLabel = k => monthPickFmt.format(new Date(monthStartMs(k)));
+// Every month the log actually covers, so the pickers can't offer an empty one.
+function loggedMonths() {
+  const last = monthKeyOf(T[N - 1]);
+  const d = new Date(T[0]);
+  const cur = new Date(d.getFullYear(), d.getMonth(), 1);
+  const out = [];
+  for (;;) {
+    const k = monthKeyOf(cur.getTime());
+    out.push(k);
+    if (k === last || out.length > 1200) break;
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  return out;
+}
+// The one place the range control becomes a window: a half-open [start, end)
+// pair of indexes into the play arrays, plus the wall-clock bounds the show
+// hours need. Bounds picked backwards are read in the order that makes sense
+// rather than silently yielding nothing.
+function wrapWindow() {
+  if (wrapState.range !== "custom")
+    return { start: rangeStartIdx(wrapState.range), end: N,
+             fromMs: wrapState.range ? T[N - 1] - wrapState.range * DAY_MS : -Infinity,
+             toMs: Infinity };
+  let a = wrapState.mFrom, b = wrapState.mTo;
+  if (a > b) [a, b] = [b, a];
+  const fromMs = monthStartMs(a), toMs = monthAfterMs(b);
+  return { start: firstIdxAtOrAfter(fromMs), end: firstIdxAtOrAfter(toMs), fromMs, toMs };
+}
 // The one definition of "your hours", shared by the song counts and the show
 // hours so the two can never disagree about what the shift covers. An overnight
 // range (to < from) attributes its post-midnight tail to the day the shift
@@ -533,20 +589,44 @@ function initWrapped() {
     from.append(new Option(slotLabel(s), s, s === wrapState.from, s === wrapState.from));
     to.append(new Option(slotLabel(s), s, s === wrapState.to, s === wrapState.to));
   }
-  $("#wrapRange").value = String(wrapState.range);
   from.addEventListener("change", () => { wrapState.from = +from.value; renderWrapped(); writeURL(); });
   to.addEventListener("change", () => { wrapState.to = +to.value; renderWrapped(); writeURL(); });
+
+  // Custom range: one option per month the log covers, so the pickers can only
+  // ever name a window that has something in it. The end defaults to the month
+  // the log is in now and the start to a year before that, which is the "last
+  // year" preset the reader was most likely looking at when they switched.
+  const months = loggedMonths();
+  const mFrom = $("#wrapMonthFrom"), mTo = $("#wrapMonthTo");
+  const clamp = k => (k && months.includes(k)) ? k : null;
+  wrapState.mTo = clamp(wrapState.mTo) || months[months.length - 1];
+  wrapState.mFrom = clamp(wrapState.mFrom) ||
+    months[Math.max(0, months.indexOf(wrapState.mTo) - 11)];
+  for (const k of months) {
+    mFrom.append(new Option(monthLabel(k), k, k === wrapState.mFrom, k === wrapState.mFrom));
+    mTo.append(new Option(monthLabel(k), k, k === wrapState.mTo, k === wrapState.mTo));
+  }
+  const syncRangeUI = () => {
+    $("#wrapMonths").hidden = wrapState.range !== "custom";
+    $("#wrapRange").value = String(wrapState.range);
+  };
+  mFrom.addEventListener("change", () => { wrapState.mFrom = mFrom.value; renderWrapped(); writeURL(); });
+  mTo.addEventListener("change", () => { wrapState.mTo = mTo.value; renderWrapped(); writeURL(); });
   $("#wrapRange").addEventListener("change", e => {
-    wrapState.range = +e.target.value; renderWrapped(); writeURL();
+    wrapState.range = e.target.value === "custom" ? "custom" : +e.target.value;
+    syncRangeUI(); renderWrapped(); writeURL();
   });
+
+  syncRangeUI();
   renderWrapped();
 }
 function renderWrapped() {
-  const start = rangeStartIdx(wrapState.range);
+  const win = wrapWindow();
+  const { start, end } = win;
   const included = i => inShift(LSLOT[i], LDOW[i]);
   const counts = new Map();
   let total = 0;
-  for (let i = start; i < N; i++) {
+  for (let i = start; i < end; i++) {
     if (!included(i)) continue;
     counts.set(SID[i], (counts.get(SID[i]) || 0) + 1);
     total++;
@@ -583,23 +663,23 @@ function renderWrapped() {
     $("#wrapLede").textContent = "No plays logged in those hours. Try widening the range.";
   }
 
-  renderWrapShows();
-  renderWrapSkew(counts, total, start);
-  renderWrapVersus(counts, total, start);
+  renderWrapShows(win);
+  renderWrapSkew(counts, total, win);
+  renderWrapVersus(counts, total, win);
 }
 
 // Counts alone don't land — "you heard Flowers 212 times" is a number, but
 // "your hours get it 2.7× more than everyone else's" is a fact about your
 // shift. Same for the inverse: the hit the whole country knows that your shift
 // somehow never met.
-function renderWrapVersus(counts, total, start) {
+function renderWrapVersus(counts, total, { start, end }) {
   const root = $("#wrapVersus");
   root.replaceChildren();
   if (!total) return;
 
   const rest = new Map();
   let restTotal = 0;
-  for (let i = start; i < N; i++) {
+  for (let i = start; i < end; i++) {
     const sid = SID[i];
     if (inShift(LSLOT[i], LDOW[i])) continue;
     rest.set(sid, (rest.get(sid) || 0) + 1);
@@ -695,26 +775,28 @@ function showOccurrences() {
   }
   return (SHOW_OCC = out);
 }
-function renderWrapShows() {
+function renderWrapShows({ fromMs, toMs }) {
   const block = $("#wrapShowsBlock");
   const occ = showOccurrences();
   if (!occ.length) { block.hidden = true; return; }
   block.hidden = false;
 
   const names = META.silence.shows.names;
-  const from = wrapState.range ? T[N - 1] - wrapState.range * DAY_MS : -Infinity;
   const mins = new Array(names.length).fill(0);
   const hit = ms => {
     const d = new Date(ms);
     return inShift(d.getHours() * 2 + (d.getMinutes() >= 30 ? 1 : 0), (d.getDay() + 6) % 7);
   };
   for (const [start, len, show] of occ) {
-    if (start + len * 60000 <= from) continue;
+    if (start + len * 60000 <= fromMs || start >= toMs) continue;
     // Sample the middle of each quarter-hour: the shift boundaries are
     // half-hours and every real UTC offset is a multiple of 15 minutes, so no
     // quarter is ever split and the total is exact rather than approximate.
-    for (let q = 0; q < len; q += 15)
-      if (hit(start + q * 60000 + 450000)) mins[show] += 15;
+    // A show straddling either edge counts only the quarters inside the window.
+    for (let q = 0; q < len; q += 15) {
+      const at = start + q * 60000 + 450000;
+      if (at >= fromMs && at < toMs && hit(at)) mins[show] += 15;
+    }
   }
 
   const totalH = mins.reduce((a, b) => a + b, 0) / 60;
@@ -742,11 +824,11 @@ function renderWrapShows() {
 // Because dayparting is real, a given shift doesn't just hear less of the
 // station — it hears a different station. This is the comparison that shows it:
 // each song's share of your hours against its share of everyone else's.
-function renderWrapSkew(counts, total, start) {
+function renderWrapSkew(counts, total, { start, end }) {
   const root = $("#wrapSkew");
   const rest = new Map();
   let restTotal = 0;
-  for (let i = start; i < N; i++) { rest.set(SID[i], (rest.get(SID[i]) || 0) + 1); restTotal++; }
+  for (let i = start; i < end; i++) { rest.set(SID[i], (rest.get(SID[i]) || 0) + 1); restTotal++; }
 
   const rows = [];
   for (const [sid, n] of counts) {
