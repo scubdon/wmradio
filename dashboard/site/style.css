@@ -533,6 +533,43 @@ table.tbl.dict td { color: var(--muted); font-size: 12.5px; }
 /* A search, not a match — it should not look like it knows the answer. */
 .ytbtn.guess { color: var(--ink-2); font-weight: 500; }
 .ytbtn.guess:hover { border-color: var(--baseline); color: var(--ink); }
+
+/* A play control on a list row. The row itself is a <button> that opens the
+   song page, so the link can't live inside it -- it sits alongside and is
+   positioned over the cover art instead. Both wrappers only exist for rows
+   that actually have a video, so an unwrapped row still lays out as before. */
+.rankrow-wrap { position: relative; }
+.rowplay {
+  position: absolute;
+  display: flex; align-items: center; justify-content: center;
+  text-decoration: none; color: #fff;
+}
+/* Over the 40px cover in .rankrow's grid: 6px row padding + 22px rank column
+   + 10px gap across, and 5px row padding down. Keep in step with
+   .rankrow's grid-template-columns and padding above. */
+.rankrow-wrap > .rowplay { left: 38px; top: 5px; width: 40px; height: 40px; }
+.tile-wrap { position: relative; flex: 0 0 108px; }
+.tile-wrap > .play-tile { width: 100%; }
+.tile-wrap > .rowplay { left: 0; top: 0; width: 108px; height: 108px; }
+
+.rowplay > svg {
+  width: 22px; height: 22px; padding: 4px; box-sizing: border-box;
+  border-radius: 50%;
+  /* Sits on album art of any colour, so it carries its own contrast rather
+     than using the theme tokens. */
+  background: rgba(12, 12, 12, 0.62);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+  transition: background 120ms ease, transform 120ms ease;
+}
+.tile-wrap > .rowplay > svg { width: 38px; height: 38px; padding: 8px; }
+.rowplay:hover > svg, .rowplay:focus-visible > svg {
+  background: rgba(12, 12, 12, 0.85); transform: scale(1.08);
+}
+.rowplay:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; border-radius: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .rowplay > svg { transition: none; }
+  .rowplay:hover > svg { transform: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .coverplay .playbadge, .ytbtn { transition: none; }
   .coverplay:hover .playbadge { transform: none; }
