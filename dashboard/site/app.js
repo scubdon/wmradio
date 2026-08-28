@@ -215,6 +215,59 @@ function coverNode(art, label, cls) {
   }
   return el("div", "cover ph" + (cls ? " " + cls : ""), (label || "?").slice(0, 1).toUpperCase());
 }
+// ---------- YouTube ----------
+// songs.json carries a video id per song, resolved offline by
+// scripts/fetch_youtube.py and correctable by hand in youtube/links.tsv. Songs
+// that matched nothing fall back to a search URL: still one click from the
+// right video, and it can't rot the way a stored id can.
+function ytHref(sid) {
+  const [artist, song, , , vid] = SONGS[sid];
+  return vid
+    ? `https://www.youtube.com/watch?v=${vid}`
+    : `https://www.youtube.com/results?search_query=${encodeURIComponent(artist + " " + song)}`;
+}
+function ytAnchor(cls) {
+  const a = el("a", cls);
+  a.target = "_blank";
+  // Without noopener the opened tab gets a handle back to this one.
+  a.rel = "noopener noreferrer";
+  return a;
+}
+function playGlyph() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M8 5.5v13l11-6.5z");
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  return svg;
+}
+// The button under the title: the page's one outbound action.
+function ytButton(sid) {
+  const [artist, song, , , vid] = SONGS[sid];
+  const a = ytAnchor("ytbtn" + (vid ? "" : " guess"));
+  a.href = ytHref(sid);
+  a.append(playGlyph(), el("span", null, vid ? "Play on YouTube" : "Find it on YouTube"));
+  a.title = vid
+    ? `Opens “${song}” by ${artist} on YouTube in a new tab`
+    : `No video was matched to this title — opens a YouTube search in a new tab`;
+  return a;
+}
+// The cover art doubles as the play control, but only when there is a real
+// video behind it. Making a search look like a play button would promise
+// something the link can't keep.
+function coverPlay(sid, art, label, cls) {
+  const cover = coverNode(art, label, cls);
+  if (!SONGS[sid][4]) return cover;
+  const wrap = ytAnchor("coverplay");
+  wrap.href = ytHref(sid);
+  wrap.setAttribute("aria-label", `Play “${SONGS[sid][1]}” on YouTube`);
+  const badge = el("span", "playbadge");
+  badge.append(playGlyph());
+  wrap.append(cover, badge);
+  return wrap;
+}
 function rampColors() {
   const cs = getComputedStyle(document.documentElement);
   // Light-to-saturated in both themes: "more" is always more blue, never whiter.
@@ -1889,7 +1942,7 @@ function songPage(sid) {
   page.append(backLink());
 
   const head = el("div", "pagehead");
-  head.append(coverNode(art, song, "xl"));
+  head.append(coverPlay(sid, art, song, "xl"));
   const ht = el("div");
   ht.append(el("p", "eyebrow", "Song"), el("h1", null, song));
   const link = el("button", "artistlink", artist);
@@ -1900,6 +1953,7 @@ function songPage(sid) {
   badge.append(el("span", "badge s-" + st, statusLabel(st)),
                el("span", "badgenote", STATUSES.find(s => s[0] === st)[2]));
   ht.append(badge);
+  ht.append(ytButton(sid));
   head.append(ht);
   page.append(head);
 

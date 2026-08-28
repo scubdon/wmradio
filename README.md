@@ -52,6 +52,9 @@ panel stating its thresholds and what it can't tell you.
   with play calendars and dot-per-play scatters, a personal "your shift"
   breakdown, and a searchable dataset explorer.
 
+Every song page also has a play button, so a track you half-recognise from the
+aisle is one click from hearing it.
+
 
 ## Credits
 
@@ -59,6 +62,13 @@ Song titles, artist names, and artwork via the [Cover Art Archive](https://cover
 [MusicBrainz](https://musicbrainz.org), and from the [stream's own metadata](https://streams.radiomast.io/2ce0b08d-2fe6-42a1-b64a-9f0a682f5508/metadata).
 Album art remains the property of its respective rights holders and appears at
 thumbnail size to illustrate the play data.
+
+Play buttons link out to YouTube. Nothing is hosted or embedded here: the link
+is picked by searching YouTube for the artist and title and preferring the
+artist's own channel, and the choices are kept in
+[`youtube/links.tsv`](youtube/links.tsv) where they can be read and corrected.
+Where no video could be matched with confidence the button runs the search
+instead of guessing. Videos belong to whoever uploaded them.
 
 Times are recorded in UTC and shown in your browser's timezone, except the
 day/night and schedule analyses, which use Central time — the station's own
