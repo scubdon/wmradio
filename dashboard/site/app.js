@@ -254,28 +254,6 @@ function ytButton(sid) {
     : `No video was matched to this title — opens a YouTube search in a new tab`;
   return a;
 }
-// The play control for a row in a list. It has to be a *sibling* of the row's
-// button rather than a child of it -- a link inside a button is invalid HTML,
-// and the row buttons are what navigate to the song page. So the caller wraps
-// the button and this anchor together and positions the anchor over the cover.
-// Rows that are artists rather than songs, and songs with no video, get nothing.
-function rowPlayLink(sid) {
-  if (sid == null || !SONGS[sid] || !SONGS[sid][4]) return null;
-  const a = ytAnchor("rowplay");
-  a.href = ytHref(sid);
-  a.setAttribute("aria-label", `Play “${SONGS[sid][1]}” on YouTube`);
-  a.title = `Play “${SONGS[sid][1]}” on YouTube`;
-  a.append(playGlyph());
-  return a;
-}
-// Wraps a row button with its play overlay, so a list can append one node.
-function withPlayOverlay(button, sid, wrapClass) {
-  const play = rowPlayLink(sid);
-  if (!play) return button;
-  const wrap = el("div", wrapClass);
-  wrap.append(button, play);
-  return wrap;
-}
 // The cover art doubles as the play control, but only when there is a real
 // video behind it. Making a search look like a play button would promise
 // something the link can't keep.
@@ -411,7 +389,7 @@ function renderRecent() {
       ? `${song} by ${artist}\nPreviously played ${fmtDur(T[i] - T[prev])} earlier · ` +
         `${n7} time${n7 === 1 ? "" : "s"} in the last 7 days`
       : `${song} by ${artist}\nFirst time in the log`;
-    strip.append(withPlayOverlay(b, sid, "tile-wrap"));
+    strip.append(b);
   }
 }
 function agoLabel(ms) {
@@ -488,7 +466,7 @@ function renderRankList(root, rows, opts) {
     b.append(el("span", "rk", String(o.startRank ? o.startRank + i : i + 1)),
              coverNode(r.art, r.t1), meta,
              el("span", "n", r.nLabel != null ? r.nLabel : fmtInt(r.n)), bar);
-    root.append(withPlayOverlay(b, r.artist ? null : r.sid, "rankrow-wrap"));
+    root.append(b);
   });
 }
 
