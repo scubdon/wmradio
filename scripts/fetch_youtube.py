@@ -26,8 +26,19 @@ the database, for three reasons: the database is a build artifact that gets
 rebuilt, GitHub Actions never has to write it back to the bucket, and a
 correction someone made by hand shows up as a reviewable diff. To correct a
 pick, edit its video_id and set its source column to `manual`; rows marked
-`manual` are never re-resolved or overwritten. To say a song should have no
-video at all, blank the video_id and mark it `manual` too.
+`manual` are never re-resolved or overwritten, by --verify either. To say a
+song should have no video at all, blank the video_id and mark it `manual` too.
+
+--verify re-checks stored links and repairs the dead ones, and is deliberately
+reluctant: it condemns a link only when yt-dlp gives a reason that means the
+video is gone for everyone, and only when that reason repeats across three
+attempts. An age gate, a throttled IP or a timeout is a failure to ask, not an
+answer, and leaves the row untouched. Being timid here is the cheap direction to
+err -- a stale-but-playable link costs a viewer nothing, while a false positive
+trades an official upload for whatever runner-up was unrestricted that day.
+Rows it does repair get source `verify` and their score/channel/title/duration
+blanked, since those described the replaced video; --redo-low re-searches them
+later to fill the provenance back in.
 
 YouTube throttles datacentre IPs harder than home ones, so the initial backfill
 is meant to be run locally and committed. The scheduled job only ever has a
@@ -106,8 +117,49 @@ def search(query: str, n: int) -> list[dict]:
     return [e for e in (info or {}).get("entries", []) or [] if e and e.get("id")]
 
 
-def video_live(video_id: str) -> bool:
-    """Is this video still playable?
+# Reasons yt-dlp fails that mean the video is genuinely gone for everyone. The
+# rest of its failures -- age gates, throttling, timeouts, extractor breakage --
+# say something about us, not about the link.
+GONE_PATTERNS = (
+    "video is not available",
+    "video is unavailable",
+    "video has been removed",
+    "removed by the uploader",
+    "removed for violating",
+    "video is private",
+    "private video",
+    "video is no longer available",
+    "account associated with this video has been terminated",
+    "account has been terminated",
+    "this video does not exist",
+    "video unavailable",
+    "who has blocked it",
+    "not available in your country",
+    "not made this video available",
+)
+# An age gate is not a dead link. yt-dlp cannot fetch these without cookies, but
+# the site only ever sends a person to the watch page, where a signed-in viewer
+# plays it normally. Treating them as dead replaces good official uploads with
+# whatever runner-up happens to be unrestricted.
+BLOCKED_PATTERNS = (
+    "sign in to confirm your age",
+    "confirm your age",
+    "age-restricted",
+    "inappropriate for some users",
+    "sign in to confirm you're not a bot",
+)
+
+
+def video_live(video_id: str) -> str:
+    """Is this video still playable? One of "live", "dead", or "unknown".
+
+    The distinction is the whole point. yt-dlp fails for many reasons and only
+    some of them mean the link is bad: a removed upload is dead, but an age
+    gate, a throttled datacentre IP, a socket timeout or a broken extractor are
+    all failures to *ask*, not answers. Collapsing those into False -- as this
+    did -- silently rewrites good links. One verify run called 14 links dead;
+    on a re-check ten were live, two were flaky, and the remaining two were
+    merely age-gated. Callers must treat "unknown" as "leave it alone".
 
     `process=False` skips format resolution. Without it yt-dlp reports
     "Requested format is not available" for perfectly good videos, which reads
@@ -121,9 +173,29 @@ def video_live(video_id: str) -> bool:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}",
                                     download=False, process=False)
-        return bool(info)
-    except Exception:
-        return False
+        return "live" if info else "unknown"
+    except Exception as e:
+        msg = str(e).lower()
+        if any(p in msg for p in BLOCKED_PATTERNS):
+            return "live"
+        if any(p in msg for p in GONE_PATTERNS):
+            return "dead"
+        return "unknown"
+
+
+def confirm_dead(video_id: str, tries: int = 3, pause: float = 4.0) -> bool:
+    """Ask again before believing a video is gone.
+
+    The same id came back dead and then live within one run, seconds apart, so a
+    single verdict is not evidence. A link is only condemned when every attempt
+    agrees it is gone; one "live" or one "unknown" is enough to spare it.
+    """
+    for i in range(tries):
+        if i:
+            time.sleep(pause)
+        if video_live(video_id) != "dead":
+            return False
+    return True
 
 
 def parse_alternates(alternates: str) -> list[tuple[str, str]]:
@@ -365,36 +437,50 @@ def verify(links, args) -> int:
     plays; if none does, the id is cleared and the site shows a search link,
     which is the one thing that cannot rot.
     """
-    rows = [r for r in links.values() if r["video_id"]]
+    rows = [r for r in links.values() if r["video_id"] and r["source"] != "manual"]
+    skipped = sum(1 for r in links.values() if r["video_id"] and r["source"] == "manual")
     if args.limit:
         rows = rows[: args.limit]
-    print(f"verifying {len(rows)} links", flush=True)
-    checked = dead = repaired = cleared = 0
+    print(f"verifying {len(rows)} links"
+          + (f" ({skipped} manual rows left alone)" if skipped else ""), flush=True)
+    checked = dead = repaired = cleared = unknown = 0
     for i, r in enumerate(rows, 1):
         checked += 1
-        if video_live(r["video_id"]):
+        if video_live(r["video_id"]) != "dead":
+            continue
+        # A first "dead" is a suspicion, not a verdict -- ask again before
+        # touching a row that has been fine until now.
+        if not confirm_dead(r["video_id"]):
+            unknown += 1
+            print(f"  ?    {r['artist']} - {r['song']} -> unconfirmed, left alone", flush=True)
             continue
         dead += 1
         label = f"{r['artist']} - {r['song']}"
         replacement = None
         for vid, _ in parse_alternates(r["alternates"]):
-            if video_live(vid):
+            if vid != r["video_id"] and video_live(vid) == "live":
                 replacement = vid
                 break
         if replacement:
-            r.update(video_id=replacement, confidence="low", source="search")
+            # The remaining columns still describe the video being replaced, so
+            # blank the ones that would otherwise lie about the new pick. The
+            # alternates are kept: they are why this id was chosen.
+            r.update(video_id=replacement, confidence="low", source="verify",
+                     channel="", title="", duration=0, score=0)
             repaired += 1
             print(f"  DEAD {label} -> fell back to {replacement}", flush=True)
         else:
-            r.update(video_id="", confidence="none", source="search",
+            r.update(video_id="", confidence="none", source="verify",
                      channel="", title="", duration=0, score=0)
             cleared += 1
             print(f"  DEAD {label} -> no live alternate, cleared", flush=True)
-        if dead % 5 == 0:
+        if (dead + cleared) % 5 == 0:
             save_links(links, args.links)
     save_links(links, args.links)
     print(f"\nchecked {checked}: {dead} dead ({repaired} repaired from alternates, "
           f"{cleared} cleared to a search link)")
+    if unknown:
+        print(f"{unknown} could not be confirmed either way and were not touched")
     return 0
 
 
