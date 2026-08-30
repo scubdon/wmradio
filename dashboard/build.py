@@ -3,7 +3,8 @@
 Build the static dashboard data files from data/radio_plays.duckdb.
 
 Emits into dashboard/site/data/:
-  songs.json  — [[artist, song, artwork_file|null, total_plays], ...]; song id = index
+  songs.json  — [[artist, song, artwork_file|null, total_plays, youtube_id|null], ...];
+                song id = index
   plays.json  — {"t0": <epoch-minute>, "dt": [...], "s": [...]}
                 delta-encoded UTC epoch-minutes + song ids, ascending
   meta.json   — totals, recording gaps, rotation inference, records & oddities,
@@ -17,8 +18,13 @@ only cross-song work that would need the whole log resident is precomputed here.
 
 Also copies the 150px artwork thumbs used by the site into site/artwork/.
 
+The YouTube ids come from youtube/links.tsv, which scripts/fetch_youtube.py
+writes and a person can correct by hand. A song with no id there just gets no
+play button; the site falls back to a YouTube search link.
+
 Run after scripts/update_duckdb.py. Pure read of the DB.
 """
+import csv
 import json
 import random
 import shutil
@@ -39,6 +45,7 @@ SITE = Path(__file__).resolve().parent / "site"
 DATA_OUT = SITE / "data"
 ART_SRC = ROOT / "artwork" / "artwork_small"
 ART_OUT = SITE / "artwork"
+YT_LINKS = ROOT / "youtube" / "links.tsv"
 
 CT = ZoneInfo("America/Chicago")
 
@@ -929,7 +936,7 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
     # The same window over artists rather than songs — the harder record, since
     # a station with 40 Fleetwood Mac tracks can dodge a song repeat for far
     # longer than it can dodge an artist repeat.
-    artist_of = [a for a, _, _, _ in songs]
+    artist_of = [row[0] for row in songs]
     last_at, start, best_art = {}, 0, (0, 0, 0)
     for i, (m, sid) in enumerate(seq):
         a = artist_of[sid]
@@ -1073,6 +1080,20 @@ def build_records(con, seq, songs, songs_index, pool_ids, down, recur):
     return out
 
 
+def load_youtube_links():
+    """(artist, song) -> video id, for every song fetch_youtube.py has resolved.
+
+    Rows with a blank video_id are songs deliberately left unlinked -- either
+    nothing good was found or someone decided none of the hits was the right
+    recording -- and are skipped here so the site shows a search link instead.
+    """
+    if not YT_LINKS.exists():
+        return {}
+    with YT_LINKS.open(newline="", encoding="utf-8") as fh:
+        return {(r["artist"], r["song"]): r["video_id"]
+                for r in csv.DictReader(fh, delimiter="\t") if r["video_id"]}
+
+
 def main():
     con = duckdb.connect(str(DB_PATH), read_only=True)
     DATA_OUT.mkdir(parents=True, exist_ok=True)
@@ -1091,7 +1112,8 @@ def main():
         FROM plays GROUP BY artist, song ORDER BY n DESC, artist, song
     """).fetchall()
     songs_index = {(a, s): i for i, (a, s, _, _) in enumerate(songs)}
-    songs_out = [[a, s, art, n] for a, s, art, n in songs]
+    yt = load_youtube_links()
+    songs_out = [[a, s, art, n, yt.get((a, s))] for a, s, art, n in songs]
 
     # --- plays.json (delta-encoded epoch minutes UTC + song ids) ---
     plays = con.execute("""
@@ -1267,6 +1289,9 @@ def main():
     print(f"plays: {n_plays:,}  songs: {len(songs):,}  artists: {n_artists:,}")
     print(f"data files: {sizes}")
     print(f"artwork thumbs: +{copied} copied, {missing} referenced but not on disk")
+    n_yt = sum(1 for row in songs_out if row[4])
+    yt_plays = sum(row[3] for row in songs_out if row[4])
+    print(f"youtube links: {n_yt:,}/{len(songs):,} songs, covering {yt_plays:,}/{n_plays:,} plays")
     dn = rotation["daynight"]
     print(f"rotation pool (last {ROTATION_WINDOW_DAYS}d): {rotation['pool_size']} songs "
           f"of {rotation['distinct_songs']} heard; +{rotation['n_entered']} in, "

@@ -11,13 +11,15 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    # This job commits new artwork thumbs back to main. Pushes made with the
-    # default GITHUB_TOKEN don't trigger workflows, so that can't loop today —
-    # but ignoring the path it writes keeps that true even if the token is ever
-    # swapped for a PAT. Data lives in GCS, so a thumbs-only commit has nothing
-    # new to publish anyway.
+    # This job commits new artwork thumbs and YouTube links back to main.
+    # Pushes made with the default GITHUB_TOKEN don't trigger workflows, so that
+    # can't loop today — but ignoring the paths it writes keeps that true even
+    # if the token is ever swapped for a PAT. The next scheduled run rebuilds
+    # the site from those files anyway, so skipping the push costs a few hours
+    # on a play button, not a stale page.
     paths-ignore:
       - "artwork/artwork_small/**"
+      - "youtube/links.tsv"
 
 permissions:
   contents: write
@@ -54,7 +56,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install duckdb requests
+      - run: pip install duckdb requests yt-dlp
 
       - uses: google-github-actions/auth@v2
         with:
@@ -76,23 +78,32 @@ jobs:
       - name: Upload refreshed DuckDB
         run: gcloud storage cp data/radio_plays.duckdb gs://wmradio-metadata/db/radio_plays.duckdb
 
+      # Only songs missing from youtube/links.tsv are searched, which after the
+      # first backfill is the handful the station has just started playing. The
+      # cap is there for the case where the file is lost or truncated: a run
+      # that would otherwise sit through 2,000 searches does 40 and the next
+      # one continues. YouTube throttles datacentre IPs, so this is allowed to
+      # fail — an unresolved song shows a search link, not a broken page.
+      - name: Resolve YouTube links for new songs
+        run: python scripts/fetch_youtube.py --limit 40 || echo "youtube resolve failed; continuing"
+
       - name: Build site data
         run: python dashboard/build.py
 
-      - name: Commit any new artwork thumbs
+      - name: Commit any new artwork thumbs and YouTube links
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add artwork/artwork_small
+          git add artwork/artwork_small youtube/links.tsv
           if git diff --cached --quiet; then
-            echo "No new thumbs to commit."
+            echo "Nothing new to commit."
             exit 0
           fi
-          git commit -m "Artwork additions"
+          git commit -m "Artwork and YouTube link additions"
           # A merge landing on main mid-run makes this push a non-fast-forward
           # and would fail the job with the refreshed database already uploaded.
-          # Nothing else in this job touches tracked files, so replaying the
-          # thumbs commit on top of whatever arrived is always safe.
+          # Nothing else in this job touches tracked files, so replaying this
+          # commit on top of whatever arrived is always safe.
           for attempt in 1 2 3; do
             if git push; then exit 0; fi
             echo "Push rejected (attempt $attempt) — rebasing onto main and retrying."
