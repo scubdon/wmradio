@@ -18,8 +18,7 @@
   --seq-400: #63a2e8; --seq-500: #3781da; --seq-600: #1d63b4; --seq-700: #114684;
   --accent-ink: #1c5cab;
   --gap-band: rgba(137, 135, 129, 0.12);
-  --cal-empty: #eceae3;   /* day with no play */
-  --cal-out: #cfcdc3;     /* day the logger was down — absence of data, not of plays */
+  --cal-empty: #eceae3;   /* unlit base under the silence grid */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -44,7 +43,6 @@
     --accent-ink: #86b6ef;
     --gap-band: rgba(137, 135, 129, 0.15);
     --cal-empty: #272725;
-    --cal-out: #46453f;
   }
 }
 
@@ -242,8 +240,12 @@ details.meth > summary:hover { text-decoration: underline; }
 .chart-svg .grid-line { stroke: var(--grid); stroke-width: 1; }
 .chart-svg .axis-line { stroke: var(--baseline); stroke-width: 1; }
 .chart-wrap { position: relative; }
+/* Fixed to the viewport, and a permanent child of <body>. It used to be
+   re-parented into whichever .chart-wrap was hovered, which meant the next
+   replaceChildren() on that container deleted it and killed every tooltip on
+   the page until a reload. */
 .tooltip {
-  position: absolute; pointer-events: none; z-index: 5;
+  position: fixed; pointer-events: none; z-index: 60;
   background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 10px; font-size: 12.5px; box-shadow: 0 4px 14px rgba(0,0,0,0.12);
   display: none; min-width: 130px;
@@ -256,12 +258,11 @@ details.meth > summary:hover { text-decoration: underline; }
 .heat-scale .swatches { display: flex; height: 10px; border-radius: 3px; overflow: hidden; }
 .heat-scale .swatches i { width: 22px; }
 
-/* calendar (GitHub-style day grid) */
-.chart-svg.cal text { font-size: 14px; }   /* viewBox units — the svg scales down */
-.cal-legend { flex-wrap: wrap; }
-.cal-legend .swatches i { width: 13px; box-shadow: inset 0 0 0 0.5px var(--border); }
-.cal-legend .outkey { display: flex; align-items: center; gap: 5px; margin-left: 8px; }
-.cal-legend .outkey i { width: 11px; height: 10px; border-radius: 2px; }
+/* key for the shaded logger-downtime bands under a time-series chart */
+.bandkey { display: flex; align-items: center; gap: 6px; margin-top: 10px;
+  color: var(--muted); font-size: 12px; }
+.bandkey i { width: 22px; height: 11px; border-radius: 2px; background: var(--gap-band);
+  box-shadow: inset 0 0 0 0.5px var(--border); flex: none; }
 
 details.tablewrap { margin-top: 12px; }
 details.tablewrap summary { color: var(--muted); font-size: 13px; cursor: pointer; }

@@ -268,12 +268,6 @@ function coverPlay(sid, art, label, cls) {
   wrap.append(cover, badge);
   return wrap;
 }
-function rampColors() {
-  const cs = getComputedStyle(document.documentElement);
-  // Light-to-saturated in both themes: "more" is always more blue, never whiter.
-  return ["--seq-100", "--seq-200", "--seq-300", "--seq-400", "--seq-500", "--seq-600", "--seq-700"]
-    .map(v => cs.getPropertyValue(v).trim());
-}
 
 // ---------- per-song stats ----------
 // Windows are measured back from the last logged play, not from wall-clock
@@ -527,7 +521,6 @@ function renderDaily() {
   svg.append(cross, dot);
   $("#dailyWrap").replaceChildren(svg);
 
-  const wrap = $("#dailyWrap"), tip = $("#tip");
   svg.addEventListener("pointermove", ev => {
     const r = svg.getBoundingClientRect();
     const px = (ev.clientX - r.left) / r.width * W;
@@ -536,12 +529,12 @@ function renderDaily() {
     cross.setAttribute("visibility", "visible");
     dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(vals[i]));
     dot.setAttribute("visibility", "visible");
-    showTip(wrap, ev, `${fmtInt(vals[i])} plays`, keyDateFmt.format(dateFromKey(days[i])));
+    showTip(ev, `${fmtInt(vals[i])} plays`, keyDateFmt.format(dateFromKey(days[i])));
   });
   svg.addEventListener("pointerleave", () => {
     cross.setAttribute("visibility", "hidden");
     dot.setAttribute("visibility", "hidden");
-    tip.style.display = "none";
+    hideTip();
   });
 
   // monthly table twin
@@ -1255,7 +1248,7 @@ function renderRecurrence() {
   }
   svg.append(svgText(left, H - 8, "time until the same song plays again", "start"));
   $("#recurWrap").replaceChildren(svg);
-  attachCellTips(svg, $("#recurWrap"));
+  attachCellTips(svg);
 
   // The conclusion is read off the comparison rather than asserted, so the day
   // the station starts working to a clock, this paragraph changes by itself.
@@ -1436,8 +1429,8 @@ function renderSilence() {
   for (let h = 0; h < 24; h += 3)
     svg.append(svgText(left + h * cw + cw / 2, 12, hourLabel(h), "middle"));
 
-  // Silence is drawn as ink over an empty-day base, so "loud" reads as blank
-  // and the schedule reads as the marks — the opposite of the play heatmap,
+  // Silence is drawn as ink over an empty base, so "loud" reads as blank and
+  // the schedule reads as the marks — inverted against every other chart here,
   // which is the point. Each block is inked in its show's colour, so the match
   // is legible in the chart and not only in the sentence above it.
   const cell = (x, y, share, fill, tip) => {
@@ -1487,7 +1480,7 @@ function renderSilence() {
   }
 
   $("#silenceWrap").replaceChildren(svg);
-  attachCellTips(svg, $("#silenceWrap"));
+  attachCellTips(svg);
 
   const scale = $("#silenceScale");
   scale.replaceChildren();
@@ -1910,18 +1903,14 @@ function overlapsOutage(a, b) {
   return OUTAGES.some(([s, e]) => a < e && b > s);
 }
 function scanPlays(match) {
-  const times = [], byMonth = new Map(), byHour = new Array(24).fill(0),
-        byDow = new Array(7).fill(0);
+  const times = [], byHour = new Array(24).fill(0), byDow = new Array(7).fill(0);
   for (let i = 0; i < N; i++) {
     if (!match(SID[i])) continue;
     times.push(i);
-    const d = new Date(T[i]);
-    const k = d.getFullYear() * 12 + d.getMonth();
-    byMonth.set(k, (byMonth.get(k) || 0) + 1);
     byHour[LHOUR[i]]++;
     byDow[LDOW[i]]++;
   }
-  return { times, byMonth, byHour, byDow };
+  return { times, byHour, byDow };
 }
 function statRow(pairs) {
   const row = el("div", "statrow");
@@ -1998,11 +1987,9 @@ function songPage(sid) {
     "dot sitting high or low the whole way across means it only ever gets " +
     "scheduled at that time."));
 
-  page.append(calendarCard(sc.times, "Every day it played",
-    "One square per day since logging began. Solid runs are spells in rotation, " +
-    "and blank runs are the song sitting out."));
-  page.append(chartCard("Plays per month", monthChart(sc.byMonth),
-    "Every month since logging began. Flat stretches are gaps in the log, not the station."));
+  page.append(weeklyCard(sc.times, "Plays per week",
+    "Every week since logging began. Tall clusters are spells in heavy rotation, " +
+    "and stretches on the baseline are the song sitting out."));
   page.append(twoUp(
     chartCard("By hour of day", barChart(sc.byHour, i => hourLabel(i), 3), "Your local time."),
     chartCard("By day of week", barChart(sc.byDow, i => DOW_LABELS[i], 1), null)));
@@ -2069,11 +2056,9 @@ function artistPage(name) {
 
   page.append(scatterCard(sc.times, "Every play, one dot",
     `Date across, time of day down, with every ${name} play in the log.`));
-  page.append(calendarCard(sc.times, "Every day they played",
-    `One square per day since logging began, counting all ${fmtInt(ids.length)} ` +
+  page.append(weeklyCard(sc.times, "Plays per week",
+    `Every week since logging began, counting all ${fmtInt(ids.length)} ` +
     `song${ids.length > 1 ? "s" : ""}.`));
-  page.append(chartCard("Plays per month", monthChart(sc.byMonth),
-    `Every ${name} play, by month.`));
   page.append(twoUp(
     chartCard("By hour of day", barChart(sc.byHour, i => hourLabel(i), 3), "Your local time."),
     chartCard("By day of week", barChart(sc.byDow, i => DOW_LABELS[i], 1), null)));
@@ -2211,83 +2196,89 @@ function recentPlaysCard(times, title) {
   card.append(list);
   return card;
 }
-// GitHub-style calendar: one cell per day, weeks as columns, Monday on top.
-// A song averages barely more than one play on the days it appears at all, so
-// what this really shows is *presence* — the stretches where a track was in
-// rotation, and the dormant runs between them.
-let OUTAGE_DAYS = null;
-function outageDays() {
-  if (!OUTAGE_DAYS) {
-    OUTAGE_DAYS = new Set();
-    for (const [a, b] of META.gaps)
-      for (let k = dayKeyOf(a); k <= dayKeyOf(b); k++) OUTAGE_DAYS.add(k);
-  }
-  return OUTAGE_DAYS;
-}
-function calendarCard(times, title, note) {
-  const byDay = new Map();
-  for (const i of times) byDay.set(LDAY[i], (byDay.get(LDAY[i]) || 0) + 1);
+// Plays per week across the whole log: one column per Monday-start week, height
+// is the play count.
+//
+// This replaced a GitHub-contribution-style day grid. The grid looked good but
+// it was encoding almost nothing: no song in the log has ever managed more than
+// two plays in a single day, so three shades of blue were carrying a variable
+// that is effectively "played" / "played twice". Weekly totals run 0–10 for a
+// top song, which is a real range worth encoding — and encoding it as bar
+// height puts the number on an axis, so the totals can be read without hovering
+// every square. Rotation spells and dormant runs still read at a glance; a
+// dormant week is now a visible zero on the baseline rather than a pale square.
+//
+// The x-axis geometry matches scatterCard() deliberately, so the two charts
+// stack with aligned time axes and can be read straight down.
+function weeklyCard(times, title, note) {
+  const W = 900, H = 200, left = 34, right = 10, top = 12, bottom = 26;
+  const iw = W - left - right, ih = H - top - bottom;
+
+  // Weeks are bucketed from the Monday on or before the first logged day, so
+  // the buckets line up with the day-of-week chart's Monday = 0 convention.
   const d0 = LDAY[0], d1 = LDAY[N - 1];
-  const lead = (dateFromKey(d0).getUTCDay() + 6) % 7;   // Monday = 0
-  const start = d0 - lead;
+  const start = d0 - ((dateFromKey(d0).getUTCDay() + 6) % 7);
   const weeks = Math.ceil((d1 - start + 1) / 7);
+  const vals = new Array(weeks).fill(0);
+  for (const i of times) vals[Math.floor((LDAY[i] - start) / 7)]++;
 
-  const cell = 10, step = 11.6, left = 30, top = 18;
-  const W = left + weeks * step, H = top + 7 * step;
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg cal",
-    role: "img", "aria-label": `${title}: one cell per day` });
+  // A tick step that lands on 1/2/5/10/… so the gridlines read as round
+  // numbers whether the song peaks at 3 plays a week or 30.
+  const peak = Math.max(1, ...vals);
+  const step = [1, 2, 5, 10, 20, 50, 100].find(v => peak / v <= 4) || 200;
+  const maxV = Math.ceil(peak / step) * step;
 
-  const out = outageDays();
-  const ramp = rampColors();
-  const levels = [ramp[2], ramp[4], ramp[6]];          // 1 play, 2, 3+
-  let lastLabel = -99, maxDay = 0;
+  const x = w => left + (w / weeks) * iw;
+  const y = v => top + ih - (v / maxV) * ih;
+  const bw = iw / weeks;
 
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": `${title}: one column per week, height is the play count` });
+
+  // Logger downtime under the bars, so a run of empty weeks reads as "we
+  // weren't listening" rather than "the station dropped it".
+  for (const [ga, gb] of META.gaps) {
+    const xa = x((dayKeyOf(ga) - start) / 7), xb = x((dayKeyOf(gb) + 1 - start) / 7);
+    svg.append(svgEl("rect", { x: xa, y: top, width: Math.max(1.5, xb - xa),
+      height: ih, fill: "var(--gap-band)" }));
+  }
+  for (let v = 0; v <= maxV; v += step) {
+    svg.append(svgEl("line", { x1: left, x2: W - right, y1: y(v), y2: y(v),
+      class: v === 0 ? "axis-line" : "grid-line" }));
+    if (v > 0) svg.append(svgText(left - 6, y(v) + 4, String(v), "end"));
+  }
+  let lastMonth = -1;
   for (let w = 0; w < weeks; w++) {
-    for (let r = 0; r < 7; r++) {
-      const key = start + w * 7 + r;
-      if (key < d0 || key > d1) continue;
-      const n = byDay.get(key) || 0;
-      maxDay = Math.max(maxDay, n);
-      const down = out.has(key);
-      const rect = svgEl("rect", {
-        x: left + w * step, y: top + r * step, width: cell, height: cell, rx: 2,
-        fill: n ? levels[Math.min(2, n - 1)] : down ? "var(--cal-out)" : "var(--cal-empty)",
-      });
-      rect.dataset.tip = JSON.stringify({
-        v: n ? `${n} play${n === 1 ? "" : "s"}` : down ? "logger down" : "not played",
-        l: keyDayFmt.format(dateFromKey(key)),
-      });
-      svg.append(rect);
-    }
-    const first = dateFromKey(start + w * 7);
-    if (first.getUTCDate() <= 7 && first.getUTCMonth() % 2 === 0 && w - lastLabel >= 6) {
-      lastLabel = w;
-      svg.append(svgText(left + w * step, 11, keyMonthFmt.format(first), "start"));
+    const dt = dateFromKey(start + w * 7);
+    if (dt.getUTCDate() <= 7 && dt.getUTCMonth() !== lastMonth && dt.getUTCMonth() % 3 === 0) {
+      lastMonth = dt.getUTCMonth();
+      svg.append(svgText(x(w) + bw / 2, H - 7, keyMonthFmt.format(dt), "middle"));
     }
   }
-  for (const r of [0, 2, 4])
-    svg.append(svgText(left - 5, top + r * step + cell - 1, DOW_LABELS[r], "end"));
+  // The first and last buckets are usually part-weeks — logging began mid-week
+  // and today is mid-week — so their totals sit low through no fault of the
+  // song. They're dimmed and labelled rather than dropped, since the newest
+  // bar is the one people look at first.
+  vals.forEach((v, w) => {
+    if (!v) return;
+    const partial = w === 0 || w === weeks - 1;
+    const h = Math.max(1.5, (v / maxV) * ih);
+    const rect = svgEl("rect", { x: x(w) + bw * 0.15, y: top + ih - h,
+      width: Math.max(1.2, bw * 0.7), height: h, rx: Math.min(1.5, bw / 4),
+      fill: "var(--series-1)", opacity: partial ? 0.45 : 1 });
+    const wk = dateFromKey(start + w * 7);
+    rect.dataset.tip = JSON.stringify({
+      v: `${v} play${v === 1 ? "" : "s"}`,
+      l: `week of ${keyDateFmt.format(wk)}${partial ? " · part week" : ""}` });
+    svg.append(rect);
+  });
 
-  const card = el("div", "card");
-  card.append(el("h3", "cardtitle", title));
-  if (note) card.append(el("p", "sub", note));
-  const wrap = el("div", "chart-wrap");
-  wrap.append(svg);
-  card.append(wrap);
-  attachCellTips(svg, wrap);
-
-  const legend = el("div", "heat-scale cal-legend");
-  legend.append(el("span", null, "fewer"));
-  const sw = el("div", "swatches");
-  for (const c of ["var(--cal-empty)", ...levels.slice(0, Math.max(1, maxDay))]) {
-    const i = el("i"); i.style.background = c; sw.append(i);
+  const card = chartCard(title, svg, note);
+  if (META.gaps.length) {
+    const legend = el("div", "bandkey");
+    legend.append(el("i"), el("span", null, "shaded — logger down, so those weeks have no data"));
+    card.append(legend);
   }
-  legend.append(sw, el("span", null, "more plays that day"));
-  const outMark = el("span", "outkey");
-  const oi = el("i"); oi.style.background = "var(--cal-out)";
-  outMark.append(oi, document.createTextNode("logger down"));
-  legend.append(outMark);
-  card.append(legend);
   return card;
 }
 function chartCard(title, svg, note) {
@@ -2297,7 +2288,7 @@ function chartCard(title, svg, note) {
   const wrap = el("div", "chart-wrap");
   wrap.append(svg);
   card.append(wrap);
-  attachCellTips(svg, wrap);
+  attachCellTips(svg);
   return card;
 }
 function fmtDur(ms) {
@@ -2305,16 +2296,6 @@ function fmtDur(ms) {
   if (h < 48) return `${h.toFixed(1)}h`;
   const d = h / 24;
   return d < 60 ? `${Math.round(d)} days` : `${(d / 30.44).toFixed(1)} months`;
-}
-function monthChart(byMonth) {
-  const k0 = new Date(T[0]).getFullYear() * 12 + new Date(T[0]).getMonth();
-  const k1 = new Date(T[N - 1]).getFullYear() * 12 + new Date(T[N - 1]).getMonth();
-  const vals = [], labels = [];
-  for (let k = k0; k <= k1; k++) {
-    vals.push(byMonth.get(k) || 0);
-    labels.push(new Date(Math.floor(k / 12), k % 12, 1));
-  }
-  return barChart(vals, i => monthFmt.format(labels[i]), 3, v => `${fmtInt(v)} plays`);
 }
 function barChart(vals, labelFor, labelEvery, tipFmt) {
   const W = 460, H = 150, left = 30, right = 6, top = 8, bottom = 22;
@@ -2357,24 +2338,29 @@ function svgText(x, y, str, anchor) {
   t.textContent = str;
   return t;
 }
-function showTip(wrap, ev, value, label) {
+// The tooltip is a single div that stays parented to <body> and is positioned
+// in viewport coordinates. It must never be moved into a chart's wrapper: the
+// containers charts live in get replaceChildren()'d on every re-render and
+// route change, which would take the tooltip with them and leave $("#tip")
+// null for the rest of the session.
+function showTip(ev, value, label) {
   const tip = $("#tip");
   tip.replaceChildren(el("div", "tv", value), el("div", "tl", label));
   tip.style.display = "block";
-  const r = wrap.getBoundingClientRect();
-  let tx = ev.clientX - r.left + 14, ty = ev.clientY - r.top - 10;
-  wrap.append(tip);
-  const tw = tip.offsetWidth;
-  if (ev.clientX + tw + 24 > window.innerWidth) tx -= tw + 28;
-  tip.style.left = tx + "px";
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let tx = ev.clientX + 14, ty = ev.clientY - 10;
+  if (tx + tw + 8 > window.innerWidth) tx = ev.clientX - tw - 14;
+  ty = Math.max(8, Math.min(ty, window.innerHeight - th - 8));
+  tip.style.left = Math.max(8, tx) + "px";
   tip.style.top = ty + "px";
 }
-function attachCellTips(svg, wrap) {
+function hideTip() { $("#tip").style.display = "none"; }
+function attachCellTips(svg) {
   svg.addEventListener("pointermove", ev => {
     const c = ev.target.closest("[data-tip]");
-    if (!c) { $("#tip").style.display = "none"; return; }
+    if (!c) { hideTip(); return; }
     const d = JSON.parse(c.dataset.tip);
-    showTip(wrap, ev, d.v, d.l);
+    showTip(ev, d.v, d.l);
   });
-  svg.addEventListener("pointerleave", () => { $("#tip").style.display = "none"; });
+  svg.addEventListener("pointerleave", hideTip);
 }

@@ -49,7 +49,7 @@ panel stating its thresholds and what it can't tell you.
   music log carries no songs inside those hours and is busy outside them, so the
   daily grid reads straight off the schedule.
 - **Records & oddities**, seasonal concentration, per-song and per-artist pages
-  with play calendars and dot-per-play scatters, a personal "your shift"
+  with weekly play histories and dot-per-play scatters, a personal "your shift"
   breakdown, and a searchable dataset explorer.
 
 Every song page also has a play button, so a track you half-recognise from the
