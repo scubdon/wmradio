@@ -252,6 +252,42 @@ details.meth > summary:hover { text-decoration: underline; }
 }
 .tooltip .tv { font-weight: 650; font-size: 14px; }
 .tooltip .tl { color: var(--ink-2); }
+/* extra detail lines — the clock times behind a day's count, or the day-by-day
+   split behind a weekly total */
+.tooltip .tx { color: var(--muted); font-size: 12px; margin-top: 3px;
+  font-variant-numeric: tabular-nums; max-width: 260px; }
+
+/* one-line instruction under a chart that answers questions on hover/drag */
+.hintline { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+
+/* readout for the day range selected on the scatter chart. It stays put after
+   the pointer leaves, so the total can be read, copied, or argued with. */
+.rangebar {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
+  margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--series-1-wash); font-size: 12.5px;
+}
+.rangebar[hidden] { display: none; }
+.rangebar .rb-n { font-size: 15px; font-weight: 650; color: var(--accent-ink);
+  font-variant-numeric: tabular-nums; }
+.rangebar .rb-w { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rangebar .rb-date {
+  font: inherit; font-variant-numeric: tabular-nums; color: var(--ink);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px;
+  padding: 2px 6px;
+}
+.rangebar .rb-date:focus { outline: none; border-color: var(--accent-ink); }
+.rangebar .rb-days { display: flex; flex-wrap: wrap; gap: 4px; flex-basis: 100%; }
+.rangebar .rb-d { color: var(--muted); font-size: 11.5px; padding: 1px 6px;
+  border-radius: 999px; background: var(--surface-1); border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums; }
+.rangebar .rb-d.hit { color: var(--accent-ink); border-color: var(--accent-ink); font-weight: 600; }
+.rangebar .rb-x { margin-left: auto; border: none; background: none; padding: 0;
+  color: var(--muted); font-size: 12px; cursor: pointer; text-decoration: underline; }
+.rangebar .rb-x:hover { color: var(--ink); }
+
+/* the scatter chart is dragged across to total a stretch of days */
+.chart-svg.pickable { cursor: crosshair; touch-action: pan-y; }
 
 /* heatmap */
 .heat-scale { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--muted); font-size: 12px; }
