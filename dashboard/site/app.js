@@ -52,6 +52,9 @@ const keyDayFmt = new Intl.DateTimeFormat(undefined,
   { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const keyMonthFmt = new Intl.DateTimeFormat(undefined,
   { month: "short", year: "2-digit", timeZone: "UTC" });
+const keyShortFmt = new Intl.DateTimeFormat(undefined,
+  { month: "short", day: "numeric", timeZone: "UTC" });
+const keyDowFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: "UTC" });
 
 // ---------- shareable state ----------
 // Every filter on the page lives in the query string, so "look at the weird
@@ -2152,10 +2155,11 @@ function scatterCard(times, title, note) {
   const W = 900, H = 240, left = 34, right = 10, top = 10, bottom = 24;
   const iw = W - left - right, ih = H - top - bottom;
   const d0 = LDAY[0], d1 = LDAY[N - 1];
-  const x = k => left + ((k - d0) / Math.max(1, d1 - d0)) * iw;
+  const span = Math.max(1, d1 - d0);
+  const x = k => left + ((k - d0) / span) * iw;
   const y = mins => top + (mins / 1440) * ih;
 
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg pickable", role: "img",
     "aria-label": `${title}: one dot per play, date across and time of day down` });
 
   for (const [ga, gb] of META.gaps) {
@@ -2176,6 +2180,14 @@ function scatterCard(times, title, note) {
       svg.append(svgText(x(k), H - 7, keyMonthFmt.format(dt), "middle"));
     }
   }
+  // Hover and selection bands go in before the dots so the dots stay on top and
+  // a selected stretch reads as a tint behind them rather than a wash over them.
+  const sel = svgEl("rect", { y: top, height: ih, fill: "var(--series-1)", opacity: 0.16,
+    stroke: "var(--series-1)", "stroke-width": 1, "stroke-opacity": 0.5, visibility: "hidden" });
+  const band = svgEl("rect", { y: top, height: ih, fill: "var(--series-1)", opacity: 0.12,
+    visibility: "hidden" });
+  svg.append(sel, band);
+
   // Low opacity so overlapping dots build up: a dense spell reads darker
   // without needing a separate density chart.
   for (const i of times) {
@@ -2184,7 +2196,155 @@ function scatterCard(times, title, note) {
       cy: y(d.getHours() * 60 + d.getMinutes()).toFixed(1),
       r: 1.7, fill: "var(--series-1)", opacity: 0.55 }));
   }
-  return chartCard(title, svg, note);
+
+  // The dots say when a song plays; on their own they can't say how many times
+  // it played on the 4th, which the day grid this chart replaced could answer by
+  // hovering a square. So the date axis is queryable: hover a day for its count
+  // and the clock times behind it, drag across a stretch for that stretch's
+  // total. The readout under the chart survives the pointer leaving, because
+  // "how many between these two dates" is a number you want to keep looking at.
+  const byDay = new Map(), playsByDay = new Map();
+  for (const i of times) {
+    byDay.set(LDAY[i], (byDay.get(LDAY[i]) || 0) + 1);
+    const a = playsByDay.get(LDAY[i]);
+    if (a) a.push(i); else playsByDay.set(LDAY[i], [i]);
+  }
+  const dw = iw / (span + 1);                 // one day's width, in viewBox units
+  const dayAt = ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) / r.width * W;
+    return Math.max(d0, Math.min(d1, d0 + Math.round((px - left) / iw * span)));
+  };
+  const place = (rect, a, b) => {
+    const xa = x(a) - dw / 2, xb = x(b) + dw / 2;
+    rect.setAttribute("x", xa.toFixed(1));
+    rect.setAttribute("width", Math.max(2, xb - xa).toFixed(1));
+    rect.setAttribute("visibility", "visible");
+  };
+  const plays = n => `${fmtInt(n)} play${n === 1 ? "" : "s"}`;
+  const countIn = (a, b) => {
+    let n = 0;
+    for (let k = a; k <= b; k++) n += byDay.get(k) || 0;
+    return n;
+  };
+  const clockTimes = k => (playsByDay.get(k) || []).map(i => timeFmt.format(new Date(T[i])));
+  const dayTip = (ev, k) => {
+    const list = clockTimes(k);
+    const shown = list.length > 8 ? list.slice(0, 8).concat([`+${list.length - 8} more`]) : list;
+    showTip(ev, plays(byDay.get(k) || 0), keyDayFmt.format(dateFromKey(k)),
+      shown.length ? [shown.join(" · ")] : null);
+  };
+  const rangeTip = (ev, a, b) => showTip(ev, plays(countIn(a, b)),
+    `${keyDateFmt.format(dateFromKey(a))} – ${keyDateFmt.format(dateFromKey(b))}`,
+    [`${b - a + 1} days`]);
+
+  // The readout is a form, not a caption. Fifteen months of log across 900
+  // units is barely a pixel a day, so a drag can land on "Jul 3 – Jul 7" when
+  // the question was about the 4th to the 6th — the two date fields are how
+  // you say exactly which days you meant. Dragging fills them in; editing
+  // either one moves the selection.
+  const bar = el("div", "rangebar");
+  bar.hidden = true;
+  const nOut = el("span", "rb-n");
+  const spanOut = el("span", "rb-w");
+  const daysRow = el("span", "rb-days");
+  const dateIn = () => {
+    const n = el("input", "rb-date");
+    n.type = "date";
+    n.min = isoFromKey(d0);
+    n.max = isoFromKey(d1);
+    return n;
+  };
+  const fromIn = dateIn(), toIn = dateIn();
+  const clearBtn = el("button", "rb-x", "clear");
+  bar.append(nOut, el("span", "rb-w", "from"), fromIn, el("span", "rb-w", "to"), toIn,
+             spanOut, clearBtn, daysRow);
+  clearBtn.addEventListener("click", () => {
+    sel.setAttribute("visibility", "hidden");
+    bar.hidden = true;
+  });
+  for (const input of [fromIn, toIn])
+    input.addEventListener("change", () => {
+      if (!fromIn.value || !toIn.value) return;
+      let a = dayKeyOf(fromIn.value), b = dayKeyOf(toIn.value);
+      if (b < a) [a, b] = [b, a];
+      a = Math.max(d0, Math.min(d1, a));
+      b = Math.max(d0, Math.min(d1, b));
+      place(sel, a, b);
+      readout(a, b);
+    });
+
+  function readout(a, b) {
+    nOut.textContent = plays(countIn(a, b));
+    fromIn.value = isoFromKey(a);
+    toIn.value = isoFromKey(b);
+    spanOut.textContent = a === b ? `· ${keyDowFmt.format(dateFromKey(a))}`
+                                  : `· ${b - a + 1} days`;
+    daysRow.replaceChildren();
+    if (a === b) {
+      // One day: the clock times are the whole answer, up to the point where
+      // the chips stop being a readable line and start being a wall.
+      const list = clockTimes(a);
+      for (const t of list.slice(0, 20)) daysRow.append(el("span", "rb-d hit", t));
+      if (list.length > 20) daysRow.append(el("span", "rb-d", `+${list.length - 20} more`));
+    } else if (b - a + 1 <= 21) {
+      // Short ranges get the day-by-day split, because a three-day total is
+      // usually asked as a way of getting at the individual days.
+      for (let k = a; k <= b; k++) {
+        const c = byDay.get(k) || 0;
+        daysRow.append(el("span", c ? "rb-d hit" : "rb-d",
+          `${keyShortFmt.format(dateFromKey(k))} ${c}`));
+      }
+    }
+    bar.hidden = false;
+  }
+
+  let anchor = null, dragging = false;
+  svg.addEventListener("pointerdown", ev => {
+    // Touch keeps its default behaviour so the page still scrolls under a
+    // finger; a tap selects a single day on pointerup instead.
+    if (ev.pointerType === "touch") return;
+    ev.preventDefault();
+    anchor = dayAt(ev);
+    dragging = true;
+    svg.setPointerCapture(ev.pointerId);
+    band.setAttribute("visibility", "hidden");
+    place(sel, anchor, anchor);
+  });
+  svg.addEventListener("pointermove", ev => {
+    const k = dayAt(ev);
+    if (dragging) {
+      const a = Math.min(anchor, k), b = Math.max(anchor, k);
+      place(sel, a, b);
+      rangeTip(ev, a, b);
+    } else {
+      place(band, k, k);
+      dayTip(ev, k);
+    }
+  });
+  svg.addEventListener("pointerup", ev => {
+    const k = dayAt(ev);
+    if (ev.pointerType === "touch") { place(sel, k, k); readout(k, k); return; }
+    if (!dragging) return;
+    dragging = false;
+    const a = Math.min(anchor, k), b = Math.max(anchor, k);
+    place(sel, a, b);
+    readout(a, b);
+  });
+  svg.addEventListener("pointercancel", () => { dragging = false; });
+  svg.addEventListener("pointerleave", () => {
+    band.setAttribute("visibility", "hidden");
+    hideTip();
+  });
+
+  // ownTips: this chart drives the tooltip itself, and attachCellTips would
+  // hide it on every move over a dot that carries no data-tip of its own.
+  const card = chartCard(title, svg, note, true);
+  card.append(el("p", "hintline",
+    "Hover a day for that day's plays, or drag across the chart to total a stretch of days — " +
+    "then fine-tune the dates to the exact ones you meant."));
+  card.append(bar);
+  return card;
 }
 // This song's own version of the station-wide recurrence chart: how long it
 // waits before coming back. The station's floor shows up here as an empty left
@@ -2265,8 +2425,11 @@ function weeklyCard(times, title, note) {
   const d0 = LDAY[0], d1 = LDAY[N - 1];
   const start = d0 - ((dateFromKey(d0).getUTCDay() + 6) % 7);
   const weeks = Math.ceil((d1 - start + 1) / 7);
-  const vals = new Array(weeks).fill(0);
-  for (const i of times) vals[Math.floor((LDAY[i] - start) / 7)]++;
+  const vals = new Array(weeks).fill(0), byDay = new Map();
+  for (const i of times) {
+    vals[Math.floor((LDAY[i] - start) / 7)]++;
+    byDay.set(LDAY[i], (byDay.get(LDAY[i]) || 0) + 1);
+  }
 
   // A tick step that lands on 1/2/5/10/… so the gridlines read as round
   // numbers whether the song peaks at 3 plays a week or 30.
@@ -2313,9 +2476,19 @@ function weeklyCard(times, title, note) {
       width: Math.max(1.2, bw * 0.7), height: h, rx: Math.min(1.5, bw / 4),
       fill: "var(--series-1)", opacity: partial ? 0.45 : 1 });
     const wk = dateFromKey(start + w * 7);
+    // A weekly total is the wrong grain for "did it play on the 4th", so the
+    // bar hands back the days it is made of rather than making that a trip to
+    // another chart. Only the days with plays are listed — the empty ones are
+    // the majority and say nothing.
+    const split = [];
+    for (let r = 0; r < 7; r++) {
+      const c = byDay.get(start + w * 7 + r) || 0;
+      if (c) split.push(`${DOW_LABELS[r]} ${keyShortFmt.format(dateFromKey(start + w * 7 + r))} · ${c}`);
+    }
     rect.dataset.tip = JSON.stringify({
       v: `${v} play${v === 1 ? "" : "s"}`,
-      l: `week of ${keyDateFmt.format(wk)}${partial ? " · part week" : ""}` });
+      l: `week of ${keyDateFmt.format(wk)}${partial ? " · part week" : ""}`,
+      x: split });
     svg.append(rect);
   });
 
@@ -2327,14 +2500,14 @@ function weeklyCard(times, title, note) {
   }
   return card;
 }
-function chartCard(title, svg, note) {
+function chartCard(title, svg, note, ownTips) {
   const card = el("div", "card");
   card.append(el("h3", "cardtitle", title));
   if (note) card.append(el("p", "sub", note));
   const wrap = el("div", "chart-wrap");
   wrap.append(svg);
   card.append(wrap);
-  attachCellTips(svg);
+  if (!ownTips) attachCellTips(svg);
   return card;
 }
 function fmtDur(ms) {
@@ -2389,9 +2562,10 @@ function svgText(x, y, str, anchor) {
 // containers charts live in get replaceChildren()'d on every re-render and
 // route change, which would take the tooltip with them and leave $("#tip")
 // null for the rest of the session.
-function showTip(ev, value, label) {
+function showTip(ev, value, label, lines) {
   const tip = $("#tip");
   tip.replaceChildren(el("div", "tv", value), el("div", "tl", label));
+  for (const s of lines || []) tip.append(el("div", "tx", s));
   tip.style.display = "block";
   const tw = tip.offsetWidth, th = tip.offsetHeight;
   let tx = ev.clientX + 14, ty = ev.clientY - 10;
@@ -2406,7 +2580,7 @@ function attachCellTips(svg) {
     const c = ev.target.closest("[data-tip]");
     if (!c) { hideTip(); return; }
     const d = JSON.parse(c.dataset.tip);
-    showTip(ev, d.v, d.l);
+    showTip(ev, d.v, d.l, d.x);
   });
   svg.addEventListener("pointerleave", hideTip);
 }
