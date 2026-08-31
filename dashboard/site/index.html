@@ -34,13 +34,13 @@
     <div class="navlinks">
       <a href="#recentSection">Recent</a>
       <a href="#topSection">Charts</a>
-      <a href="#chartSection">Every song</a>
       <a href="#wrappedSection">Your radio</a>
       <a href="#recordsSection">Records</a>
       <a href="#rotationSection">The playlist</a>
       <a href="#daySection">One day</a>
       <a href="#browseSection">Browse</a>
       <a href="#dataSection">Data</a>
+      <a href="#chartSection">Every song</a>
     </div>
   </div>
 </nav>
@@ -99,25 +99,6 @@
         <div class="ranklist" id="topArtists"></div>
         <button class="morebtn" id="moreArtists">Show 50 more</button>
       </div>
-    </div>
-  </section>
-
-  <section id="chartSection">
-    <h2>Every song, ranked</h2>
-    <p class="sub">The whole chart, not just the top of it — all
-       <span id="chartTotal"></span> in the log, ordered by all-time plays.
-       <span id="chartTailNote"></span></p>
-    <div class="card">
-      <div class="filters" id="chartBands" role="group" aria-label="Play count"></div>
-      <div class="ranklist full" id="chartList"></div>
-      <div class="pager" id="chartPager">
-        <button class="chip" id="chartPrev">← Prev</button>
-        <label class="pagepick" for="chartPage">Page</label>
-        <select id="chartPage"></select>
-        <button class="chip" id="chartNext">Next →</button>
-        <span class="pageinfo" id="chartInfo" aria-live="polite"></span>
-      </div>
-      <p class="sub" id="chartTieNote" style="margin:12px 0 0"></p>
     </div>
   </section>
 
@@ -345,6 +326,25 @@
         <div class="methbody" id="coverageNote"></div>
         <details class="tablewrap"><summary>Every logger outage</summary><div id="outageTable"></div></details>
       </div>
+    </div>
+  </section>
+
+  <section id="chartSection">
+    <h2>Every song, ranked</h2>
+    <p class="sub">The whole chart, not just the top of it — all
+       <span id="chartTotal"></span> in the log, ordered by all-time plays.
+       <span id="chartTailNote"></span></p>
+    <div class="card">
+      <div class="filters" id="chartBands" role="group" aria-label="Play count"></div>
+      <div class="ranklist full" id="chartList"></div>
+      <div class="pager" id="chartPager">
+        <button class="chip" id="chartPrev">← Prev</button>
+        <label class="pagepick" for="chartPage">Page</label>
+        <select id="chartPage"></select>
+        <button class="chip" id="chartNext">Next →</button>
+        <span class="pageinfo" id="chartInfo" aria-live="polite"></span>
+      </div>
+      <p class="sub" id="chartTieNote" style="margin:12px 0 0"></p>
     </div>
   </section>
 
