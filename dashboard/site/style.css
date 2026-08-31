@@ -138,8 +138,16 @@ header.site .statline {
   font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--muted); margin: 0 0 10px;
 }
-.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); gap: 1px;
+/* --fcols / --flast are set by renderFindings() so the row of cards always
+   comes out even — no half-empty last row when a finding is added or dropped. */
+.findings { display: grid; grid-template-columns: repeat(var(--fcols, 3), 1fr); gap: 1px;
   background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.findings > .finding:last-child { grid-column: span var(--flast, 1); }
+@media (max-width: 760px) {
+  .findings { grid-template-columns: repeat(2, 1fr); }
+  .findings > .finding:last-child { grid-column: auto; }
+}
+@media (max-width: 480px) { .findings { grid-template-columns: 1fr; } }
 .finding {
   background: var(--surface-1); padding: 14px 16px; text-decoration: none; color: inherit;
   display: flex; flex-direction: column; gap: 3px;
