@@ -5,6 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Recently played at Walmart</title>
 <meta name="description" content="(Almost) every song played on the in-store Walmart Radio stream, logged minute-by-minute since May 2024, and what two years of it reveals about how the station is programmed.">
+<link rel="canonical" href="https://scubdon.github.io/wmradio/">
+
+<!-- Link previews. Every dial on the page lives in the query string, so a link
+     to somebody's shift is a real link — these make it unfurl as something
+     other than a bare URL. Absolute, because og: URLs are not resolved
+     against the page. The card is the site's, not the shift's: rendering a
+     per-shift image would need a server, and Pages is static. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Recently played at Walmart">
+<meta property="og:title" content="Recently played at Walmart">
+<meta property="og:description" content="(Almost) every song the in-store Walmart Radio stream has played since May 2024, logged minute by minute — and what two years of it reveals about how the station is programmed.">
+<meta property="og:url" content="https://scubdon.github.io/wmradio/">
+<meta property="og:image" content="https://scubdon.github.io/wmradio/assets/cover-large.jpg">
+<meta property="og:image:width" content="1024">
+<meta property="og:image:height" content="1024">
+<meta property="og:image:alt" content="Mock album cover reading &quot;NOW That's What I Call Walmart Radio&quot;">
+<meta name="twitter:card" content="summary">
+
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
 </head>
@@ -117,6 +135,9 @@
         <div class="group" id="wrapMonths" hidden>
           <label for="wrapMonthFrom">from</label> <select id="wrapMonthFrom"></select>
           <label for="wrapMonthTo">through</label> <select id="wrapMonthTo"></select>
+        </div>
+        <div class="group sharegroup">
+          <button type="button" class="sharebtn" id="wrapShare" aria-live="polite">Copy link to this shift</button>
         </div>
       </div>
       <h3 class="cardtitle wraptitle">Your Walmart wrapped</h3>
