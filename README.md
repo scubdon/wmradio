@@ -48,6 +48,10 @@ panel stating its thresholds and what it can't tell you.
   to the morning show running two hours on weekdays and one at weekends. The
   music log carries no songs inside those hours and is busy outside them, so the
   daily grid reads straight off the schedule.
+- **The whole chart, not just the top of it** — every song ranked by all-time
+  plays, a hundred to a page, with bands for the tail. Songs on the same number
+  of plays share a place, so "which songs have only ever played once" is a chip
+  rather than a guess.
 - **Records & oddities**, seasonal concentration, per-song and per-artist pages
   with weekly play histories and dot-per-play scatters — hover a day on the
   scatter for that day's plays, or drag across it for the total over a stretch

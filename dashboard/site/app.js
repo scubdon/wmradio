@@ -32,6 +32,7 @@ let S_FIRST, S_LAST;        // Float64Array: first / last play, epoch ms
 let S_N7, S_N30, S_N90;     // Int32Array: plays in the trailing 7 / 30 / 90 days
 let S_NWIN, S_NPREV;        // Int32Array: plays in this and the previous rotation window
 let PREV_SAME;              // Int32Array: index of the previous play of the same song, or -1
+let S_RANK;                 // Int32Array: all-time chart position, ties sharing a place
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -105,6 +106,15 @@ const URLSTATE = {
     set: v => { pendingDate = v; },
     def: "",
   },
+  // The chart's band and page. renderChart clamps the page to what the band
+  // actually has, so a stale link to page 40 of a band that shrank lands on
+  // its last page rather than on nothing.
+  plays: {
+    get: () => chartBand,
+    set: v => { if (CHART_BANDS.some(b => b[0] === v)) chartBand = v; },
+    def: "all",
+  },
+  page: { get: () => chartPage, set: v => { chartPage = Math.max(1, +v || 1); }, def: 1 },
   q: { get: () => browseQ, set: v => { browseQ = v.toLowerCase(); }, def: "" },
   status: { get: () => browseStatus, set: v => { browseStatus = v; }, def: "all" },
   sort: {
@@ -179,6 +189,7 @@ function writeURL() {
   renderRecent();
   initRangeFilters();
   renderTopSection();
+  initChart();
   renderDaily();
   initWrapped();
   initDayView();
@@ -282,6 +293,17 @@ function computeSongStats() {
   S_N7 = new Int32Array(M); S_N30 = new Int32Array(M); S_N90 = new Int32Array(M);
   S_NWIN = new Int32Array(M); S_NPREV = new Int32Array(M);
   PREV_SAME = new Int32Array(N).fill(-1);
+
+  // Position in the all-time chart. songs.json arrives ordered by total plays
+  // desc, so the index is already the ordinal — but the tail is a block of
+  // songs on one play apiece, and numbering those in whatever order the
+  // artist/title tie-break landed reads as precision the data hasn't got.
+  // Equal play counts share a place, and the next distinct count resumes at
+  // its own index, so the last place is lower than the number of songs by the
+  // size of the tie sitting on it.
+  S_RANK = new Int32Array(M);
+  for (let i = 0; i < M; i++)
+    S_RANK[i] = (i > 0 && SONGS[i][3] === SONGS[i - 1][3]) ? S_RANK[i - 1] : i + 1;
 
   const win = META.rotation.window_days;
   const end = T[N - 1];
@@ -472,9 +494,13 @@ function renderRankList(root, rows, opts) {
     if (r.t2 !== "") meta.append(el("div", "t2", r.t2));
     const bar = el("div", "bar");
     bar.style.width = `${Math.max(2, (r.n / max) * 100)}%`;
-    b.append(el("span", "rk", String(o.startRank ? o.startRank + i : i + 1)),
-             coverNode(r.art, r.t1), meta,
-             el("span", "n", r.nLabel != null ? r.nLabel : fmtInt(r.n)), bar);
+    const rk = r.rank != null ? fmtInt(r.rank)
+             : String(o.startRank ? o.startRank + i : i + 1);
+    // The unit rides in its own span so a narrow screen can drop it and give
+    // the width back to the title, which is the part worth reading.
+    const nEl = el("span", "n", r.nLabel != null ? r.nLabel : fmtInt(r.n));
+    if (r.nUnit) nEl.append(el("span", "nunit", r.nUnit));
+    b.append(el("span", "rk", rk), coverNode(r.art, r.t1), meta, nEl, bar);
     root.append(b);
   });
 }
@@ -1657,6 +1683,136 @@ function renderDropped() {
   $("#droppedList").replaceChildren(tbl);
 }
 
+// ---------- every song, ranked ----------
+// The top-of-the-charts lists answer "what's big"; this answers "where does
+// this one sit", and — the question that prompted it — "which songs have only
+// ever played once". Sorting the explorer by plays ascending got you there
+// already, but only if it occurred to you to sort ascending.
+const CHART_PAGE = 100;
+// Upper bound of each band, ascending. The last one is open-ended.
+const CHART_BANDS = [
+  ["all", "All songs", null, null, "songs"],
+  ["1", "Played once", 1, 1, "songs played exactly once"],
+  ["2", "2–4 plays", 2, 4, "songs on 2 to 4 plays"],
+  ["5", "5–19 plays", 5, 19, "songs on 5 to 19 plays"],
+  ["20", "20–99 plays", 20, 99, "songs on 20 to 99 plays"],
+  ["100", "100 or more", 100, Infinity, "songs on 100 plays or more"],
+];
+let chartBand = "all", chartPage = 1;
+
+const chartBandOf = key => CHART_BANDS.find(b => b[0] === key) || CHART_BANDS[0];
+function chartRows(key) {
+  const [, , lo, hi] = chartBandOf(key || chartBand);
+  const out = [];
+  for (let sid = 0; sid < SONGS.length; sid++) {
+    const n = SONGS[sid][3];
+    if (lo == null || (n >= lo && n <= hi)) out.push(sid);
+  }
+  return out;
+}
+
+function initChart() {
+  const once = chartRows("1").length;
+  let under5 = 0;
+  for (const [, , , n] of SONGS) if (n < 5) under5++;
+  $("#chartTotal").textContent = `${fmtInt(SONGS.length)} songs`;
+  $("#chartTailNote").textContent = once
+    ? `The foot of it is the part that's hard to get at any other way: ` +
+      `${fmtInt(once)} song${once === 1 ? " has" : "s have"} played exactly once, ` +
+      `and ${fmtInt(under5)} fewer than five times.`
+    : `Every song in the log has played at least twice.`;
+
+  // Ties are the whole reason this reads as a chart rather than a list: the
+  // songs on one play are not that many different positions, they are one.
+  const tieRank = once ? S_RANK[SONGS.length - 1] : 0;
+  $("#chartTieNote").textContent =
+    "Songs on the same number of plays share a place" +
+    (once > 1
+      ? `, so the ${fmtInt(once)} played once are all #${fmtInt(tieRank)} — not ` +
+        `#${fmtInt(tieRank)} through #${fmtInt(SONGS.length)}.`
+      : ".") +
+    " Click any row for the song's own page.";
+
+  const bands = $("#chartBands");
+  bands.append(el("span", "flabel", "Plays"));
+  for (const [key, label] of CHART_BANDS) {
+    const k = chartRows(key).length;
+    if (!k) continue;              // no songs in the band, no chip
+    const b = el("button", "chip", label);
+    b.dataset.band = key;
+    b.title = `${fmtInt(k)} song${k === 1 ? "" : "s"}`;
+    bands.append(b);
+  }
+  if (!bands.querySelector(`[data-band="${chartBand}"]`)) chartBand = "all";
+  syncChips(bands, "band", chartBand);
+
+  bands.addEventListener("click", e => {
+    const btn = e.target.closest(".chip"); if (!btn) return;
+    chartBand = btn.dataset.band;
+    chartPage = 1;
+    syncChips(bands, "band", chartBand);
+    renderChart();
+    writeURL();
+  });
+  $("#chartPage").addEventListener("change", e => {
+    chartPage = +e.target.value;
+    renderChart();
+    writeURL();
+    scrollChartIntoView();
+  });
+  for (const [btn, step] of [[$("#chartPrev"), -1], [$("#chartNext"), 1]])
+    btn.addEventListener("click", () => {
+      chartPage += step;
+      renderChart();
+      writeURL();
+      scrollChartIntoView();
+    });
+  renderChart();
+}
+// Paging swaps a hundred rows out from under the reader; without this the
+// viewport stays where it was and the new page starts somewhere above.
+function scrollChartIntoView() {
+  $("#chartSection").scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+function renderChart() {
+  const rows = chartRows();
+  const pages = Math.max(1, Math.ceil(rows.length / CHART_PAGE));
+  chartPage = Math.min(pages, Math.max(1, chartPage));
+  const from = (chartPage - 1) * CHART_PAGE;
+  const slice = rows.slice(from, from + CHART_PAGE);
+
+  // Bars are scaled against the most-played song in the whole log, not against
+  // the top of the current page, so page 30 doesn't draw its 4-play songs as
+  // full-width hits.
+  renderRankList($("#chartList"), slice.map(sid => ({
+    sid, n: SONGS[sid][3], rank: S_RANK[sid],
+    t1: SONGS[sid][1], t2: SONGS[sid][0], art: SONGS[sid][2],
+    nLabel: fmtInt(SONGS[sid][3]),
+    nUnit: SONGS[sid][3] === 1 ? " play" : " plays",
+  })), { max: SONGS.length ? SONGS[0][3] : 1 });
+
+  const sel = $("#chartPage");
+  sel.replaceChildren();
+  for (let p = 1; p <= pages; p++) {
+    const a = (p - 1) * CHART_PAGE + 1, b = Math.min(rows.length, p * CHART_PAGE);
+    const o = el("option", null, `${p} of ${pages} · ${fmtInt(a)}–${fmtInt(b)}`);
+    o.value = String(p);
+    sel.append(o);
+  }
+  sel.value = String(chartPage);
+  $("#chartPrev").disabled = chartPage === 1;
+  $("#chartNext").disabled = chartPage === pages;
+
+  const noun = CHART_BANDS.find(b => b[0] === chartBand)[4];
+  $("#chartInfo").textContent = rows.length
+    ? `Showing ${fmtInt(from + 1)}–${fmtInt(from + slice.length)} of ${fmtInt(rows.length)} ${noun}`
+    : "Nothing in that band.";
+  // One page needs no controls, but the count is still worth saying.
+  for (const n of [$("#chartPrev"), $("#chartNext"), $("#chartPage"), $("#chartPager .pagepick")])
+    n.hidden = pages === 1;
+}
+
 // ---------- records & oddities ----------
 function renderRecords() {
   const wrap = $("#recordsList");
@@ -2027,7 +2183,7 @@ function songPage(sid) {
 
   page.append(statRow([
     [fmtInt(total), "total plays"],
-    [`#${sid + 1}`, "all-time rank"],
+    [`#${fmtInt(S_RANK[sid])}`, "all-time rank"],
     [(total / spanDays * 7).toFixed(1), "plays per week"],
     [dateFmt.format(new Date(first)), "first heard"],
     [dateFmt.format(new Date(last)), "last heard"],
