@@ -189,7 +189,6 @@ function writeURL() {
   renderRecent();
   initRangeFilters();
   renderTopSection();
-  initChart();
   renderDaily();
   initWrapped();
   initDayView();
@@ -200,6 +199,7 @@ function writeURL() {
   renderRecords();
   initBrowse();
   renderDataSection();
+  initChart();
   renderFooter();
   writeURL();
   document.addEventListener("click", onGlobalClick);
