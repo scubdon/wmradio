@@ -221,6 +221,26 @@ details.meth > summary:hover { text-decoration: underline; }
 .rankrow .t2 { color: var(--ink-2); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rankrow .n { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
 .rankrow .bar { grid-column: 3 / 5; height: 6px; border-radius: 0 3px 3px 0; background: var(--series-1); margin-top: 2px; }
+
+/* The full chart runs to four-figure places and spells out "plays", so both
+   end columns need more room than the top-15 lists do. */
+.ranklist.full .rankrow { grid-template-columns: 46px 40px 1fr auto; }
+.pager {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--grid);
+}
+.pager .pagepick { color: var(--muted); font-size: 13px; }
+.pager .pageinfo { color: var(--muted); font-size: 12.5px; margin-left: auto; }
+.pager .chip:disabled { opacity: 0.4; cursor: default; }
+.pager .chip:disabled:hover { color: var(--ink-2); }
+@media (max-width: 620px) {
+  .pager .pageinfo { margin-left: 0; flex-basis: 100%; }
+  /* Four-figure places and the word "plays" between them leave a phone about
+     a hundred pixels of song title. The title wins. */
+  .ranklist.full .rankrow { grid-template-columns: 40px 34px 1fr auto; gap: 8px; }
+  .ranklist.full .cover { width: 34px; height: 34px; }
+  .rankrow .nunit { display: none; }
+}
 .cover {
   width: 40px; height: 40px; border-radius: 6px; object-fit: cover;
   background: var(--grid); display: block;
