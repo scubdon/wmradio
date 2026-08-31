@@ -356,6 +356,9 @@ function renderFindings() {
       "with its published schedule", "#silenceWrap"]);
   }
   const wrap = $("#findings");
+  const cols = findingCols(items.length);
+  wrap.style.setProperty("--fcols", cols);
+  wrap.style.setProperty("--flast", cols - (items.length % cols || cols) + 1);
   wrap.replaceChildren();
   for (const [value, label, href] of items) {
     const a = el("a", "finding");
@@ -363,6 +366,15 @@ function renderFindings() {
     a.append(el("span", "fv", value), el("span", "fl", label));
     wrap.append(a);
   }
+}
+
+// The item count moves as findings come and go, so pick a column count that
+// divides it evenly where one exists; otherwise the last card widens to cover
+// the leftover cells rather than leaving holes in the row.
+function findingCols(n) {
+  if (n <= 5) return n;
+  for (const c of [5, 4, 3]) if (n % c === 0) return c;
+  return 4;
 }
 
 // ---------- recently played ----------
