@@ -663,8 +663,54 @@ function initWrapped() {
     syncRangeUI(); renderWrapped(); writeURL();
   });
 
+  initShareLink();
   syncRangeUI();
   renderWrapped();
+}
+
+// writeURL() omits any dial sitting at its default, so the address bar for a
+// default shift is a bare URL that doesn't even name this section — fine as
+// state, useless as a link somebody sends. The share button builds its own:
+// all three dials stated outright, plus the anchor, and nothing from the other
+// sections' dials, which have no bearing on a shift.
+function shiftLink() {
+  const p = new URLSearchParams();
+  for (const k of ["shift", "days", "over"]) p.set(k, String(URLSTATE[k].get()));
+  return location.origin + location.pathname + "?" + p + "#wrappedSection";
+}
+function initShareLink() {
+  const btn = $("#wrapShare");
+  const label = btn.textContent;
+  let revert = null;
+  btn.addEventListener("click", async () => {
+    const url = shiftLink();
+    let ok = true;
+    try {
+      // Racing a timer, because a document that has lost focus or visibility
+      // leaves writeText() pending rather than rejecting — and a promise that
+      // never settles is a button that never answers.
+      await Promise.race([
+        navigator.clipboard.writeText(url),
+        new Promise((_, rej) => setTimeout(rej, 1200, new Error("clipboard stalled"))),
+      ]);
+    } catch {
+      // No clipboard: an insecure origin, a browser that withholds it, or the
+      // stall above. The old hidden-textarea trick still works in all three.
+      const ta = el("textarea");
+      ta.value = url;
+      ta.style.cssText = "position:fixed;top:-1000px;opacity:0";
+      document.body.append(ta);
+      ta.select();
+      try { ok = document.execCommand("copy"); } catch { ok = false; }
+      ta.remove();
+    }
+    // A button that says "copied" when it didn't is worse than one that admits
+    // it, so the reader gets the URL to copy by hand instead.
+    btn.textContent = ok ? "Link copied" : "Press Ctrl/Cmd-C";
+    btn.classList.toggle("copied", ok);
+    clearTimeout(revert);
+    revert = setTimeout(() => { btn.textContent = label; btn.classList.remove("copied"); }, 2200);
+  });
 }
 function renderWrapped() {
   const win = wrapWindow();
