@@ -75,6 +75,13 @@ jobs:
       - name: Fetch artwork for new songs
         run: python scripts/fetch_artwork.py || echo "artwork fetch failed; continuing"
 
+      # After the fetch, not before: the database is re-downloaded every run, so
+      # the committed manifest is the only durable record of a hand-picked cover,
+      # and replaying it last also lets it override artwork the feed supplies for
+      # the same song (Rockbot's grey placeholder tile, mostly).
+      - name: Apply hand-picked artwork
+        run: python scripts/manual_artwork.py apply
+
       - name: Upload refreshed DuckDB
         run: gcloud storage cp data/radio_plays.duckdb gs://wmradio-metadata/db/radio_plays.duckdb
 

@@ -18,8 +18,6 @@ MusicBrainz rate limit: 1 request/second (enforced below). Be patient:
 """
 import argparse
 import re
-import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -27,6 +25,9 @@ from pathlib import Path
 
 import duckdb
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from manual_artwork import make_thumb
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "radio_plays.duckdb"
@@ -117,17 +118,8 @@ def fetch_cover(mbid: str) -> bytes | None:
 def save_artwork(mbid: str, data: bytes) -> str:
     fname = f"rg_{mbid}.jpg"
     large = LARGE_DIR / fname
-    small = SMALL_DIR / fname
     large.write_bytes(data)
-    for cmd in (["sips", "-Z", "150", str(large), "--out", str(small)],
-                ["magick", str(large), "-resize", "150x150", str(small)],
-                ["convert", str(large), "-resize", "150x150", str(small)]):
-        try:
-            if subprocess.run(cmd, capture_output=True).returncode == 0:
-                return fname
-        except FileNotFoundError:
-            continue
-    shutil.copy2(large, small)  # no resizer available; 500px thumb still works
+    make_thumb(large, SMALL_DIR / fname)
     return fname
 
 
