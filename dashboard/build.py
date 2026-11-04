@@ -1148,8 +1148,14 @@ def main():
     prev_cutoff = max_ts - timedelta(days=2 * ROTATION_WINDOW_DAYS)
     skew_cutoff = max_ts - timedelta(days=SKEW_WINDOW_DAYS)
 
+    # ORDER BY is load-bearing: build_recurrence subtracts consecutive plays of
+    # the same song, so unsorted rows give it negative intervals. Physical row
+    # order tracked the clock closely enough to hide that until a bulk ingest
+    # landed a backlog out of order, and then two in five gaps came out below
+    # zero. SQL promises no order without asking for one.
     rot_rows = con.execute(
-        "SELECT ts_utc, artist, song FROM plays WHERE ts_utc >= ?", [cutoff]
+        "SELECT ts_utc, artist, song FROM plays WHERE ts_utc >= ? ORDER BY ts_utc",
+        [cutoff],
     ).fetchall()
     prev_rows = con.execute(
         "SELECT artist, song, count(*) FROM plays WHERE ts_utc >= ? AND ts_utc < ? "
