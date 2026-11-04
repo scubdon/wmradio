@@ -141,7 +141,7 @@ def main():
     args = parser.parse_args()
 
     con = duckdb.connect(str(args.db))
-    last_ts, n_before = con.sql("SELECT max(ts_utc), count(*) FROM plays").fetchone()
+    last_ts, n_before = con.execute("SELECT max(ts_utc), count(*) FROM plays").fetchone()
     print(f"DB: {n_before:,} plays, latest {last_ts}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -155,11 +155,11 @@ def main():
         con.execute(INSERT_SQL.format(
             source_union=" UNION ALL ".join(sources),
             artist_case=artist_case_sql(), song_case=song_case_sql()))
-        n_new = con.sql("SELECT count(*) FROM incoming").fetchone()[0]
+        n_new = con.execute("SELECT count(*) FROM incoming").fetchone()[0]
         con.execute("INSERT INTO plays SELECT * FROM incoming")
         con.execute("COMMIT")
 
-    n_after, new_ts = con.sql("SELECT count(*), max(ts_utc) FROM plays").fetchone()
+    n_after, new_ts = con.execute("SELECT count(*), max(ts_utc) FROM plays").fetchone()
     missing_art = con.execute(
         "SELECT count(DISTINCT (artist, song)) FROM plays "
         "WHERE artwork_url IS NULL AND ts_utc > ?", [last_ts]

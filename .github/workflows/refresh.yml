@@ -56,7 +56,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install duckdb requests yt-dlp
+      # duckdb is pinned because 2.0.0 removed Relation.fetchone(), and the
+      # unpinned install picked it up mid-shift and failed every run for twelve
+      # days — with nothing in this repo's own history to explain it. Bump this
+      # deliberately, after checking the scripts against the new version.
+      # yt-dlp is deliberately left unpinned: YouTube breaks old versions, so
+      # that step wants whatever is current, and it is allowed to fail anyway.
+      - run: pip install 'duckdb==2.0.0' requests yt-dlp
 
       - uses: google-github-actions/auth@v2
         with:
